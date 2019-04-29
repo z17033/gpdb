@@ -1680,8 +1680,8 @@ exec_simple_query(const char *query_string)
 				(nodeTag(parsetree) == T_UpdateStmt)))
 		{
 			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("Only allow RETRIEVE, SELECT, transaction and GUC statements for retrieve role")));
+			        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				        errmsg("Only allow RETRIEVE, SELECT and GUC statements for retrieve role")));
 		}
 		/*
 		 * If are connected in utility mode, disallow PREPARE TRANSACTION
