@@ -51,6 +51,10 @@ function install_deps_for_ubuntu() {
 }
 
 function install_deps() {
+  # if USER_CONFIGURE_FLAGS_ONLY is non empty, it is building without quicklz, sigar.
+  if [ -n "${USER_CONFIGURE_FLAGS_ONLY}" ]; then
+    return
+  fi
   case "${TARGET_OS}" in
     centos) install_deps_for_centos;;
     ubuntu) install_deps_for_ubuntu;;
@@ -128,6 +132,10 @@ function include_zstd() {
 
 function include_quicklz() {
   local libdir
+  # if USER_CONFIGURE_FLAGS_ONLY is non empty, it is building without quicklz, sigar.
+  if [ -n "${USER_CONFIGURE_FLAGS_ONLY}" ]; then
+    return
+  fi
   case "${TARGET_OS}" in
     centos) libdir=/usr/lib64 ;;
     ubuntu) libdir=/usr/local/lib ;;
@@ -249,6 +257,7 @@ function _main() {
   fi
 
   export CONFIGURE_FLAGS=${CONFIGURE_FLAGS}
+  export USER_CONFIGURE_FLAGS_ONLY=${USER_CONFIGURE_FLAGS_ONLY}
 
   build_gpdb "${BLD_TARGET_OPTION[@]}"
   git_info

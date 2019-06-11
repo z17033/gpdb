@@ -4,6 +4,7 @@ image_resource:
 inputs:
   - name: gpdb_src
   - name: libquicklz-installer
+    optional: true
   - name: libquicklz-devel-installer
     optional: true
   - name: libsigar-installer
@@ -19,4 +20,5 @@ params:
   BLD_TARGETS:
   OUTPUT_ARTIFACT_DIR: gpdb_artifacts
   CONFIGURE_FLAGS:
+  USER_CONFIGURE_FLAGS_ONLY:
   ORCA_TAG: v3.48.0
