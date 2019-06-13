@@ -32,11 +32,7 @@ core: pygresql subprocess32
 	python gpconfig_modules/parse_guc_metadata.py $(prefix)
 
 ifneq "$(wildcard $(CURDIR)/pythonSrc/ext/*.tar.gz)" ""
-ifeq "${USER_CONFIGURE_FLAGS_ONLY}" ""
 install: core lockfile stream psutil
-else
-install: core lockfile stream psutil argparse ecdsa
-endif
 else
 install: core stream
 endif
@@ -132,36 +128,6 @@ ifeq "$(findstring $(BLD_ARCH),aix7_ppc_64 )" ""
 	cd $(PYLIB_SRC_EXT)/ && $(TAR) xzf $(PSUTIL_DIR).tar.gz
 	cd $(PYLIB_SRC_EXT)/$(PSUTIL_DIR)/ && CC="$(CC)" python setup.py build
 	cp -r $(PYLIB_SRC_EXT)/$(PSUTIL_DIR)/build/lib.*/psutil $(PYLIB_DIR)
-endif
-
-#
-# ARGPARSE
-#
-ARGPARSE_VERSION=1.2.1
-ARGPARSE_DIR=argparse-$(ARGPARSE_VERSION)
-
-argparse:
-	@echo "--- argparse"
-ifeq "$(findstring $(BLD_ARCH),aix7_ppc_64 )" ""
-	cd $(PYLIB_SRC_EXT)/ && $(TAR) xzf $(ARGPARSE_DIR).tar.gz
-	wget https://bootstrap.pypa.io/get-pip.py -O - | python
-	pip install setuptools
-	cd $(PYLIB_SRC_EXT)/$(ARGPARSE_DIR)/ && CC="$(CC)" python setup.py build
-	cp -r $(PYLIB_SRC_EXT)/$(ARGPARSE_DIR)/build/lib/argparse.py $(PYLIB_DIR)
-endif
-
-#
-# ECDSA
-#
-ECDSA_VERSION=0.13
-ECDSA_DIR=ecdsa-$(ECDSA_VERSION)
-
-ecdsa:
-	@echo "--- ecdsa"
-ifeq "$(findstring $(BLD_ARCH),aix7_ppc_64 )" ""
-	cd $(PYLIB_SRC_EXT)/ && $(TAR) xzf $(ECDSA_DIR).tar.gz
-	cd $(PYLIB_SRC_EXT)/$(ECDSA_DIR)/ && CC="$(CC)" python setup.py build
-	cp -r $(PYLIB_SRC_EXT)/$(ECDSA_DIR)/build/lib/ecdsa $(PYLIB_DIR)
 endif
 
 #
