@@ -48,7 +48,7 @@ build_gpdb () {
         # TODO this is gross
         # this is where the src/Makefile.global expects python
         (
-        export LD_LIBRARY_PATH="/opt/python-2.7.12/lib"
+        export LD_LIBRARY_PATH="/opt/python-2.7.12/lib:${lib_dir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export PATH="/opt/python-2.7.12/bin:${PATH}"
         export PYTHONHOME=/opt/python-2.7.12
         CC="gcc" CFLAGS="-O3 -fargument-noalias-global -fno-omit-frame-pointer -g" \
@@ -98,19 +98,19 @@ include_libstdcxx () {
     # if this is a platform that we use a non-system toolchain for, we need to
     # vendor libstdc++
     if [ -d /opt/gcc-6.4.0 ]; then
-        cp --archive /opt/gcc-6.4.0/lib64/libstdc++.so.6{,.0.22} "${greemplum_install_dir}/lib"
+        cp --archive /opt/gcc-6.4.0/lib64/libstdc++.so.6{,.0.22} "${greenplum_install_dir}/lib"
     fi
 }
 
 include_zstd () {
     local greenplum_install_dir="${1}"
     local platform
-    platform="$(. /etc/os-release; echo "${ID}")"
+    platform="$(python -mplatform)"
 
     local libdir
     case "${platform}" in
-    centos) libdir=/usr/lib64 ;;
-    ubuntu) libdir=/usr/lib ;;
+    *centos*) libdir=/usr/lib64 ;;
+    *Ubuntu*) libdir=/usr/lib ;;
     *) return ;;
     esac
 
@@ -131,6 +131,10 @@ export_gpdb () {
 _main () {
     fetch_orca_src "${ORCA_TAG}"
 
+    if [ -e /opt/gcc_env.sh ]; then
+        . /opt/gcc_env.sh
+    fi
+
     local build_dir="$(mktemp -d --tmpdir=.)"
     build_xerces "${build_dir}"
     build_orca "${build_dir}"
@@ -144,7 +148,8 @@ _main () {
     include_python "${greenplum_install_dir}"
     include_libstdcxx "${greenplum_install_dir}"
     include_zstd "${greenplum_install_dir}"
-    export_gpdb "${greenplum_install_dir}" "${PWD}/output.tgz"
+    mkdir gpdb_artifacts
+    export_gpdb "${greenplum_install_dir}" "${PWD}/gpdb_artifacts/bin_gpdb.tar.gz"
 
 }
 
