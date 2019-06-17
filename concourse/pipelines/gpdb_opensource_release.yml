@@ -59,30 +59,6 @@ resources:
       json_key: ((gcs-key))
       versioned_file: ubuntu18.04/python-2.7.12.tar.gz
 
-  ## RHEL6 Resources
-  - name: bin_gpdb_centos6
-    type: gcs
-    source:
-      json_key: {{concourse-gcs-resources-service-account-key}}
-      bucket: {{gcs-bucket-intermediates}}
-      versioned_file: ((pipeline-name))/bin_gpdb_centos6/bin_gpdb.tar.gz
-
-  ## RHEL7 Resources
-  - name: bin_gpdb_centos7
-    type: gcs
-    source:
-      json_key: {{concourse-gcs-resources-service-account-key}}
-      bucket: {{gcs-bucket-intermediates}}
-      versioned_file: ((pipeline-name))/bin_gpdb_centos7/bin_gpdb.tar.gz
-
-  ## Ubuntu18.04 Resources
-  - name: bin_gpdb_ubuntu18.04
-    type: gcs
-    source:
-      json_key: {{concourse-gcs-resources-service-account-key}}
-      bucket: {{gcs-bucket-intermediates}}
-      versioned_file: ((pipeline-name))/bin_gpdb_ubuntu18.04/bin_gpdb.tar.gz
-
 ## ======================================================================
 ## JOBS JOBS JOBS
 ## ======================================================================
@@ -96,18 +72,8 @@ jobs:
           - get: python-tarball
             resource: python-centos6
       - task: compile_gpdb
-        file: gpdb_src/concourse/tasks/compile_gpdb.yml
+        file: gpdb_src/concourse/tasks/compile_gpdb_oss.yml
         image: gpdb6-centos6-build
-        params:
-          CONFIGURE_FLAGS: "--enable-orca --with-zstd --with-gssapi --with-libxml --with-perl --with-python --with-openssl --with-pam --with-ldap"
-          USER_CONFIGURE_FLAGS_ONLY: true
-          TARGET_OS: centos
-          TARGET_OS_VERSION: 6
-      - aggregate:
-          - put: bin_gpdb_centos6
-            params:
-              file: gpdb_artifacts/bin_gpdb.tar.gz
-
   - name: compile_gpdb_centos7
     plan:
       - aggregate:
@@ -118,16 +84,7 @@ jobs:
             resource: python-centos7
       - task: compile_gpdb
         image: gpdb6-centos7-build
-        file: gpdb_src/concourse/tasks/compile_gpdb.yml
-        params:
-          CONFIGURE_FLAGS: "--enable-orca --with-zstd --with-gssapi --with-libxml --with-perl --with-python --with-openssl --with-pam --with-ldap"
-          USER_CONFIGURE_FLAGS_ONLY: true
-          TARGET_OS: centos
-          TARGET_OS_VERSION: 7
-      - aggregate:
-          - put: bin_gpdb_centos7
-            params:
-              file: gpdb_artifacts/bin_gpdb.tar.gz
+        file: gpdb_src/concourse/tasks/compile_gpdb_oss.yml
 
   - name: compile_gpdb_ubuntu18.04
     plan:
@@ -139,13 +96,4 @@ jobs:
             resource: python-ubuntu18.04
       - task: compile_gpdb
         image: gpdb6-ubuntu18.04-build
-        file: gpdb_src/concourse/tasks/compile_gpdb.yml
-        params:
-          CONFIGURE_FLAGS: "--enable-orca --with-zstd --with-gssapi --with-libxml --with-perl --with-python --with-openssl --with-pam --with-ldap"
-          USER_CONFIGURE_FLAGS_ONLY: true
-          TARGET_OS: ubuntu
-          TARGET_OS_VERSION: "18.04"
-      - aggregate:
-          - put: bin_gpdb_ubuntu18.04
-            params:
-              file: gpdb_artifacts/bin_gpdb.tar.gz
+        file: gpdb_src/concourse/tasks/compile_gpdb_oss.yml
