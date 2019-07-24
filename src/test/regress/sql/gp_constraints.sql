@@ -39,6 +39,12 @@ INSERT INTO PRIMARY_TBL VALUES (2, 'two');
 
 INSERT INTO tmp VALUES (1, 'three');
 INSERT INTO PRIMARY_TBL SELECT * FROM tmp;
+-- database object names as separate fields in error messages can be shown when VERBOSITY set to verbose
+\set VERBOSITY verbose
+-- start_ignore
+INSERT INTO PRIMARY_TBL SELECT * FROM tmp;
+-- end_ignore
+\set VERBOSITY default
 
 SELECT '' AS four, * FROM PRIMARY_TBL;
 

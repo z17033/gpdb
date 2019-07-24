@@ -45,8 +45,20 @@ INSERT INTO PRIMARY_TBL VALUES (1, 'one');
 INSERT INTO PRIMARY_TBL VALUES (2, 'two');
 INSERT INTO tmp VALUES (1, 'three');
 INSERT INTO PRIMARY_TBL SELECT * FROM tmp;
-ERROR:  duplicate key value violates unique constraint "primary_tbl_pkey"
+ERROR:  duplicate key value violates unique constraint "primary_tbl_pkey"  (seg1 127.0.0.1:25433 pid=6874)
 DETAIL:  Key (i)=(1) already exists.
+-- database object names as separate fields in error messages can be shown when VERBOSITY set to verbose
+\set VERBOSITY verbose
+-- start_ignore
+INSERT INTO PRIMARY_TBL SELECT * FROM tmp;
+ERROR:  23505: duplicate key value violates unique constraint "primary_tbl_pkey"  (seg1 127.0.0.1:25433 pid=6874)
+DETAIL:  Key (i)=(1) already exists.
+SCHEMA NAME:  gpdb_insert
+TABLE NAME:  primary_tbl
+CONSTRAINT NAME:  primary_tbl_pkey
+LOCATION:  _bt_check_unique, nbtinsert.c:500
+-- end_ignore
+\set VERBOSITY default
 SELECT '' AS four, * FROM PRIMARY_TBL;
  four | i |  t  
 ------+---+-----
