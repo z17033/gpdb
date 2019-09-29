@@ -8,7 +8,10 @@ import stat
 import time
 import glob
 import shutil
-import subprocess
+try:
+    import subprocess32 as subprocess
+except:
+    import subprocess
 import difflib
 
 import yaml
@@ -670,10 +673,12 @@ def check_user_permissions(file_name, access_mode):
 def are_segments_running():
     gparray = GpArray.initFromCatalog(dbconn.DbURL())
     segments = gparray.getDbList()
+    result = True
     for seg in segments:
         if seg.status != 'u':
-            return False
-    return True
+            print "segment is not up - %s" % seg
+            result = False
+    return result
 
 
 def modify_sql_file(file, hostport):

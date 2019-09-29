@@ -60,7 +60,7 @@ namespace gpdxl
 	//---------------------------------------------------------------------------
 	class CTranslatorQueryToDXL
 	{
-		friend CTranslatorScalarToDXL;
+		friend class CTranslatorScalarToDXL;
 
 		// shorthand for functions for translating DXL nodes to GPDB expressions
 		typedef CDXLNode * (CTranslatorQueryToDXL::*DXLNodeToLogicalFunc)(const RangeTblEntry *rte, ULONG rti, ULONG current_query_level);
@@ -436,9 +436,6 @@ namespace gpdxl
 			// obtain the column id for the tuple oid column of the target table
 			// of a DML statement
 			ULONG GetTupleOidColId();
-
-			// translate a grouping func expression
-			CDXLNode *TranslateGroupingFuncToDXL(const Expr *expr, CBitSet *bitset, UlongToUlongMap *grpcol_index_to_colid_mapping) const;
 
 			// construct a list of CTE producers from the query's CTE list
 			void ConstructCTEProducerList(List *cte_list, ULONG query_level);

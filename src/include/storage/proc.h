@@ -6,7 +6,7 @@
  *
  * Portions Copyright (c) 2006-2008, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2014, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -17,6 +17,7 @@
 #define _PROC_H_
 
 #include "access/xlogdefs.h"
+#include "lib/ilist.h"
 #include "storage/latch.h"
 #include "storage/lock.h"
 #include "storage/spin.h"
@@ -100,7 +101,7 @@ struct PGPROC
 	/*
 	 * Distributed transaction information. This is only maintained on QE's
 	 * and accessed by the backend itself, so this doesn't need to be
-	 * protected by any lock. On QD currentGXact provides this info, hence
+	 * protected by any lock. On QD MyTmGxact provides this info, hence
 	 * redundant info is not maintained here for QD. In fact, it could be just
 	 * a global variable in backend-private memory, but it seems useful to
 	 * have this information available for debugging purposes.
@@ -128,7 +129,7 @@ struct PGPROC
 	/* Info about LWLock the process is currently waiting for, if any. */
 	bool		lwWaiting;		/* true if waiting for an LW lock */
 	uint8		lwWaitMode;		/* lwlock mode being waited for */
-	struct PGPROC *lwWaitLink;	/* next waiter for same LW lock */
+	dlist_node	lwWaitLink;		/* position in LW lock wait list */
 
 	/* Info about lock the process is currently waiting for, if any. */
 	/* waitLock and waitProcLock are NULL if not currently waiting. */
@@ -206,6 +207,7 @@ struct PGPROC
 extern PGDLLIMPORT PGPROC *MyProc;
 extern PGDLLIMPORT struct PGXACT *MyPgXact;
 extern PGDLLIMPORT struct TMGXACT *MyTmGxact;
+extern PGDLLIMPORT struct TMGXACTLOCAL *MyTmGxactLocal;
 
 /* Special for MPP reader gangs */
 extern PGDLLIMPORT PGPROC *lockHolderProcPtr;
@@ -315,7 +317,7 @@ extern void ProcQueueInit(PROC_QUEUE *queue);
 extern int	ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable);
 extern PGPROC *ProcWakeup(PGPROC *proc, int waitStatus);
 extern void ProcLockWakeup(LockMethod lockMethodTable, LOCK *lock);
-extern void CheckDeadLock(void);
+extern void CheckDeadLockAlert(void);
 extern bool IsWaitingForLock(void);
 extern void LockErrorCleanup(void);
 

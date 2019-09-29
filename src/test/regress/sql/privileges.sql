@@ -21,6 +21,7 @@ DROP ROLE IF EXISTS regressuser3;
 DROP ROLE IF EXISTS regressuser4;
 DROP ROLE IF EXISTS regressuser5;
 DROP ROLE IF EXISTS regressuser6;
+DROP ROLE IF EXISTS non_superuser_schema;
 
 -- start_ignore
 SELECT lo_unlink(oid) FROM pg_largeobject_metadata WHERE oid >= 1000 AND oid < 3000 ORDER BY oid;
@@ -266,7 +267,7 @@ SELECT * FROM atestv2; -- fail (even though regressuser2 can access underlying a
 -- Test column level permissions
 
 SET SESSION AUTHORIZATION regressuser1;
-CREATE TABLE atest5 (one int, two int, three int) distributed randomly;
+CREATE TABLE atest5 (one int, two int unique, three int, four int);
 CREATE TABLE atest6 (one int, two int, blue int);
 GRANT SELECT (one), INSERT (two), UPDATE (three) ON atest5 TO regressuser4;
 GRANT ALL (one) ON atest5 TO regressuser3;
@@ -317,6 +318,23 @@ INSERT INTO atest5 VALUES (5,5,5); -- fail
 UPDATE atest5 SET three = 10; -- ok
 UPDATE atest5 SET one = 8; -- fail
 UPDATE atest5 SET three = 5, one = 2; -- fail
+-- Check that column level privs are enforced in RETURNING
+-- Ok.
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10;
+-- Error. No SELECT on column three.
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.three;
+-- Ok.  May SELECT on column "one":
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = 10 RETURNING atest5.one;
+-- Check that column level privileges are enforced for EXCLUDED
+-- Ok. we may select one
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.one;
+-- Error. No select rights on three
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set three = EXCLUDED.three;
+INSERT INTO atest5(two) VALUES (6) ON CONFLICT (two) DO UPDATE set one = 8; -- fails (due to UPDATE)
+INSERT INTO atest5(three) VALUES (4) ON CONFLICT (two) DO UPDATE set three = 10; -- fails (due to INSERT)
+-- Check that the the columns in the inference require select privileges
+-- Error. No privs on four
+INSERT INTO atest5(three) VALUES (4) ON CONFLICT (four) DO UPDATE set three = 10;
 
 SET SESSION AUTHORIZATION regressuser1;
 REVOKE ALL (one) ON atest5 FROM regressuser4;
@@ -942,21 +960,49 @@ SELECT d.*     -- check that entries went away
 -- Grant on all objects of given type in a schema
 \c -
 
+-- GPDB: Create a helper function to inspect the segment information also
+DROP FUNCTION IF EXISTS has_table_privilege_seg(u text, r text, p text);
+CREATE FUNCTION has_table_privilege_seg(us text, rel text, priv text)
+RETURNS TABLE (
+	segid int,
+	has_table_privilege bool
+) AS $$
+	SELECT
+		gp_execution_segment() AS gegid,
+		p.*
+	FROM
+		has_table_privilege($1, $2, $3) p
+$$ LANGUAGE SQL VOLATILE
+CONTAINS SQL EXECUTE ON ALL SEGMENTS;
+
 CREATE SCHEMA testns;
 CREATE TABLE testns.t1 (f1 int);
 CREATE TABLE testns.t2 (f1 int);
+CREATE TABLE testns.t3 (f1 int) PARTITION BY RANGE (f1) (START (2018) END (2020) EVERY (1),DEFAULT PARTITION extra );
+CREATE TABLE testns.t4 (f1 int) inherits (testns.t1);
 
 SELECT has_table_privilege('regressuser1', 'testns.t1', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t1', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3_1_prt_extra', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t4', 'SELECT'); -- false
 
 GRANT ALL ON ALL TABLES IN SCHEMA testns TO regressuser1;
 
 SELECT has_table_privilege('regressuser1', 'testns.t1', 'SELECT'); -- true
 SELECT has_table_privilege('regressuser1', 'testns.t2', 'SELECT'); -- true
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t1', 'SELECT'); -- true
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3', 'SELECT'); -- true
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3_1_prt_extra', 'SELECT'); -- true
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t4', 'SELECT'); -- true
 
 REVOKE ALL ON ALL TABLES IN SCHEMA testns FROM regressuser1;
 
 SELECT has_table_privilege('regressuser1', 'testns.t1', 'SELECT'); -- false
 SELECT has_table_privilege('regressuser1', 'testns.t2', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t3_1_prt_extra', 'SELECT'); -- false
+SELECT * FROM has_table_privilege_seg('regressuser1', 'testns.t4', 'SELECT'); -- false
 
 CREATE FUNCTION testns.testfunc(int) RETURNS int AS 'select 3 * $1;' LANGUAGE sql;
 
@@ -1063,6 +1109,8 @@ DROP OWNED BY regressuser1;
 -- regression test: superuser create a schema and authorize it to a non-superuser
 CREATE ROLE "non_superuser_schema";
 CREATE SCHEMA test_non_superuser_schema AUTHORIZATION "non_superuser_schema";
+DROP SCHEMA test_non_superuser_schema;
+DROP USER non_superuser_schema;
 
 DROP USER regressuser1;
 DROP USER regressuser2;

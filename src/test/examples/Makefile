@@ -18,5 +18,5 @@ PROGS = test_parallel_cursor testlibpq testlibpq2 testlibpq3 testlibpq4 testlo t
 
 all: $(PROGS)
 
-clean:
-	rm -f $(PROGS)
+clean distclean maintainer-clean:
+	rm -f $(PROGS) *.o

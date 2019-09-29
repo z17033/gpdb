@@ -18,7 +18,7 @@
  * readSharedLocalSnapshot_forCursor().  Validate that the contents read from
  * the file match what was written.
  */
-void
+static void
 test_write_read_shared_snapshot_for_cursor(void **state)
 {
 #define XCNT 5
@@ -67,7 +67,7 @@ test_write_read_shared_snapshot_for_cursor(void **state)
 	expect_any_count(FaultInjector_InjectFaultIfSet, tableName, 13);
 	will_be_called_count(FaultInjector_InjectFaultIfSet, 13);
 
-	expect_any(LWLockRelease, l);
+	expect_any(LWLockRelease, lock);
 	will_be_called(LWLockRelease);
 
 	MyProc = &writer_proc;
@@ -89,6 +89,8 @@ test_write_read_shared_snapshot_for_cursor(void **state)
 
 	SnapshotData snapshot;
 	snapshot.xip = palloc(XCNT * sizeof(TransactionId));
+#define SUBXCNT 1
+	snapshot.subxip = palloc(SUBXCNT * sizeof(TransactionId));
 
 	/* read snapshot from the same file */
 	readSharedLocalSnapshot_forCursor(&snapshot, DTX_CONTEXT_QE_READER);
@@ -99,7 +101,7 @@ test_write_read_shared_snapshot_for_cursor(void **state)
 		assert_true(slot.snapshot.xip[i] == snapshot.xip[i]);
 }
 
-void
+static void
 test_boundaries_of_CreateSharedSnapshotArray(void **state)
 {
 	/*
@@ -135,8 +137,8 @@ test_boundaries_of_CreateSharedSnapshotArray(void **state)
 		 * Assert that every slot xip array falls inside the boundaries of the
 		 * allocated shared snapshot.
 		 */
-		assert_true(s->snapshot.xip > fakeSharedSnapshotArray);
-		assert_true(s->snapshot.xip < (((void *)fakeSharedSnapshotArray) +
+		assert_true((uint8_t *)s->snapshot.xip > (uint8_t *)fakeSharedSnapshotArray);
+		assert_true((uint8_t *)s->snapshot.xip < (((uint8_t *)fakeSharedSnapshotArray) +
 												sharedSnapshotShmemSize));
 	}
 }

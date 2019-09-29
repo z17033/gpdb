@@ -352,6 +352,8 @@
             </p>
             <p><xref href="guc-list.xml#optimizer_parallel_union" type="section"
                 >optimizer_parallel_union</xref></p>
+            <p><xref href="guc-list.xml#optimizer_penalize_skew" type="section"
+                >optimizer_penalize_skew</xref></p>
             <p><xref href="guc-list.xml#optimizer_print_missing_stats" type="section"
                 >optimizer_print_missing_stats</xref>
             </p>
@@ -370,10 +372,10 @@
     <abstract>These parameters control aspects of SQL query processing such as query operators and
       operator settings and statistics sampling.</abstract>
     <topic id="topic22" xml:lang="en">
-      <title>Postgres Query Optimizer Operator Control Parameters</title>
+      <title>Postgres Planner Control Parameters</title>
       <body>
-        <p>The following parameters control the types of plan operations the Postgres query optimizer
-          can use. Enable or disable plan operations to force the Postgres optimizer to choose a
+        <p>The following parameters control the types of plan operations the Postgres Planner
+          can use. Enable or disable plan operations to force the Postgres Planner to choose a
           different plan. This is useful for testing and comparing query performance using different
           plan types.</p>
         <simpletable id="kh158625" frame="none">
@@ -463,7 +465,7 @@
       </body>
     </topic>
     <topic id="topic23" xml:lang="en">
-      <title>Postgres Query Optimizer Costing Parameters</title>
+      <title>Postgres Planner Costing Parameters</title>
       <body>
         <note type="warning">Do not adjust these query costing parameters. They are tuned to reflect
           Greenplum Database hardware configurations and typical workloads. All of these parameters
@@ -624,7 +626,7 @@
       </body>
     </topic>
     <topic id="topic28" xml:lang="en">
-      <title>Other Postgres Query Optimizer Configuration Parameters</title>
+      <title>Other Postgres Planner Configuration Parameters</title>
       <body>
         <simpletable id="d1e746" frame="none">
           <strow>
@@ -1534,9 +1536,10 @@
     </body>
   </topic>
   <topic id="topic56">
-    <title>Greenplum Database Extension Parameters</title>
+    <title>Greenplum PL/Java Parameters</title>
     <body>
-      <p>The parameters in this topic control the configuration of Greenplum Database extensions. </p>
+      <p>The parameters in this topic control the configuration of the Greenplum Database PL/Java
+        language. </p>
       <simpletable frame="none" id="simpletable_n1h_tzl_zp">
         <strow>
           <stentry>
@@ -1557,9 +1560,12 @@
         </strow>
       </simpletable>
     </body>
+  </topic>
     <topic id="topic_t3n_qml_rz">
       <title>XML Data Parameters</title>
       <body>
+        <p>The parameters in this topic control the configuration of the Greenplum Database XML data
+          type. </p>
         <simpletable frame="none" id="simpletable_yyd_tml_rz">
           <strow>
             <stentry>
@@ -1574,5 +1580,4 @@
         </simpletable>
       </body>
     </topic>
-  </topic>
 </topic>

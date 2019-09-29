@@ -357,7 +357,7 @@ static bool PolicyAutoPrelimWalker(Node *node, PolicyAutoContext *context)
 			context->numNonMemIntensiveOperators++;
 		}
 	}
-	return plan_tree_walker(node, PolicyAutoPrelimWalker, context);
+	return plan_tree_walker(node, PolicyAutoPrelimWalker, context, true);
 }
 
 /**
@@ -401,7 +401,7 @@ static bool PolicyAutoAssignWalker(Node *node, PolicyAutoContext *context)
 			elog(GP_RESMANAGER_MEMORY_LOG_LEVEL, "assigning plan node memory = %dKB", (int )planNode->operatorMemKB);
 		}
 	}
-	return plan_tree_walker(node, PolicyAutoAssignWalker, context);
+	return plan_tree_walker(node, PolicyAutoAssignWalker, context, true);
 }
 
 /**
@@ -411,20 +411,20 @@ static bool PolicyAutoAssignWalker(Node *node, PolicyAutoContext *context)
  */
 void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableBytes)
 {
-	 PolicyAutoContext ctx;
-	 exec_init_plan_tree_base(&ctx.base, stmt);
-	 ctx.queryMemKB = (uint64) (memAvailableBytes / 1024);
-	 ctx.numMemIntensiveOperators = 0;
-	 ctx.numNonMemIntensiveOperators = 0;
-	 ctx.plannedStmt = stmt;
+	PolicyAutoContext ctx;
+	exec_init_plan_tree_base(&ctx.base, stmt);
+	ctx.queryMemKB = (uint64) (memAvailableBytes / 1024);
+	ctx.numMemIntensiveOperators = 0;
+	ctx.numNonMemIntensiveOperators = 0;
+	ctx.plannedStmt = stmt;
 
 #ifdef USE_ASSERT_CHECKING
-	 bool result =
+	bool result =
 #endif
 			 PolicyAutoPrelimWalker((Node *) stmt->planTree, &ctx);
 
-	 Assert(!result);
-	 Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
+	Assert(!result);
+	Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
 
 	/*
 	 * Make sure there is enough operator memory in resource group mode.
@@ -433,54 +433,55 @@ void PolicyAutoAssignOperatorMemoryKB(PlannedStmt *stmt, uint64 memAvailableByte
 							ctx.numNonMemIntensiveOperators +
 							ctx.numMemIntensiveOperators);
 
-	 if (ctx.queryMemKB <= ctx.numNonMemIntensiveOperators * (*gp_resmanager_memory_policy_auto_fixed_mem))
-	 {
-		 elog(ERROR, ERRMSG_GP_INSUFFICIENT_STATEMENT_MEMORY);
-	 }
+	if (ctx.queryMemKB <= ctx.numNonMemIntensiveOperators * (*gp_resmanager_memory_policy_auto_fixed_mem))
+	{
+		elog(ERROR, ERRMSG_GP_INSUFFICIENT_STATEMENT_MEMORY);
+	}
 
 #ifdef USE_ASSERT_CHECKING
-	 result =
+	result =
 #endif
 			 PolicyAutoAssignWalker((Node *) stmt->planTree, &ctx);
 
-	 Assert(!result);
+	Assert(!result);
 }
 
-/**
- * What should be query mem such that memory intensive operators get a certain minimum amount of memory.
- * Return value is in KB.
+/*
+ * What should be query mem such that memory intensive operators get a certain
+ * minimum amount of memory.  Return value is in bytes.
  */
- uint64 PolicyAutoStatementMemForNoSpillKB(PlannedStmt *stmt, uint64 minOperatorMemKB)
- {
-	 Assert(stmt);
-	 Assert(minOperatorMemKB > 0);
+uint64
+PolicyAutoStatementMemForNoSpill(PlannedStmt *stmt, uint64 minOperatorMem)
+{
+	Assert(stmt);
+	Assert(minOperatorMem > 0);
 
-	 const uint64 nonMemIntenseOpMemKB = (uint64) (*gp_resmanager_memory_policy_auto_fixed_mem);
+	const uint64 nonMemIntenseOpMem = ((uint64) (*gp_resmanager_memory_policy_auto_fixed_mem) * 1024);
 
-	 PolicyAutoContext ctx;
-	 exec_init_plan_tree_base(&ctx.base, stmt);
-	 ctx.queryMemKB = (uint64) (stmt->query_mem / 1024);
-	 ctx.numMemIntensiveOperators = 0;
-	 ctx.numNonMemIntensiveOperators = 0;
-	 ctx.plannedStmt = stmt;
+	PolicyAutoContext ctx;
+	exec_init_plan_tree_base(&ctx.base, stmt);
+	ctx.queryMemKB = (uint64) (stmt->query_mem / 1024);
+	ctx.numMemIntensiveOperators = 0;
+	ctx.numNonMemIntensiveOperators = 0;
+	ctx.plannedStmt = stmt;
 
 #ifdef USE_ASSERT_CHECKING
-	 bool result =
+	bool result =
 #endif
-			 PolicyAutoPrelimWalker((Node *) stmt->planTree, &ctx);
+		PolicyAutoPrelimWalker((Node *) stmt->planTree, &ctx);
 
-	 Assert(!result);
-	 Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
+	Assert(!result);
+	Assert(ctx.numMemIntensiveOperators + ctx.numNonMemIntensiveOperators > 0);
 
-	 /**
-	  * Right now, the inverse is straightforward.
-	  * TODO: Siva - employ binary search to find the right value.
-	  */
-	 uint64 requiredStatementMemKB = ctx.numNonMemIntensiveOperators * nonMemIntenseOpMemKB
-			 + ctx.numMemIntensiveOperators * minOperatorMemKB;
+	/*
+	 * Right now, the inverse is straightforward.
+	 * TODO: Siva - employ binary search to find the right value.
+	 */
+	uint64 requiredStatementMem = ctx.numNonMemIntensiveOperators * nonMemIntenseOpMem
+									+ ctx.numMemIntensiveOperators * minOperatorMem;
 
-	 return requiredStatementMemKB;
- }
+	return requiredStatementMem;
+}
 
 /*
  * CreateOperatorGroup
@@ -772,7 +773,7 @@ PolicyEagerFreePrelimWalker(Node *node, PolicyEagerFreeContext *context)
 		}
 	}
 
-	bool result = plan_tree_walker(node, PolicyEagerFreePrelimWalker, context);
+	bool result = plan_tree_walker(node, PolicyEagerFreePrelimWalker, context, true);
 	Assert(!result);
 
 	/*
@@ -877,7 +878,7 @@ PolicyEagerFreeAssignWalker(Node *node, PolicyEagerFreeContext *context)
 		}
 	}
 
-	bool result = plan_tree_walker(node, PolicyEagerFreeAssignWalker, context);
+	bool result = plan_tree_walker(node, PolicyEagerFreeAssignWalker, context, true);
 	Assert(!result);
 
 	/*

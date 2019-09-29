@@ -32,7 +32,7 @@
  * happen, it would tie up KnownAssignedXids indefinitely, so we protect
  * ourselves by pruning the array when a valid list of running XIDs arrives.
  *
- * Portions Copyright (c) 1996-2014, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -49,8 +49,9 @@
 #include "access/distributedlog.h"
 #include "access/subtrans.h"
 #include "access/transam.h"
-#include "access/xact.h"
 #include "access/twophase.h"
+#include "access/xact.h"
+#include "access/xlog.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "port/atomics.h"
@@ -101,11 +102,8 @@ typedef struct ProcArrayStruct
 	/* oldest catalog xmin of any replication slot */
 	TransactionId replication_slot_catalog_xmin;
 
-	/*
-	 * We declare pgprocnos[] as 1 entry because C wants a fixed-size array,
-	 * but actually it is maxProcs entries long.
-	 */
-	int			pgprocnos[1];	/* VARIABLE LENGTH ARRAY */
+	/* indexes into allPgXact[], has PROCARRAY_MAXPROCS entries */
+	int			pgprocnos[FLEXIBLE_ARRAY_MEMBER];
 } ProcArrayStruct;
 
 static ProcArrayStruct *procArray;
@@ -306,7 +304,7 @@ ProcArrayAdd(PGPROC *proc)
 	/*
 	 * Keep the procs array sorted by (PGPROC *) so that we can utilize
 	 * locality of references much better. This is useful while traversing the
-	 * ProcArray because there is a increased likelihood of finding the next
+	 * ProcArray because there is an increased likelihood of finding the next
 	 * PGPROC structure in the cache.
 	 *
 	 * Since the occurrence of adding/removing a proc is much lower than the
@@ -407,7 +405,7 @@ ProcArrayEndGxact(void)
 	if (InvalidDistributedTransactionId != gxid &&
 		TransactionIdPrecedes(ShmemVariableCache->latestCompletedDxid, gxid))
 		ShmemVariableCache->latestCompletedDxid = gxid;
-	initGxact(MyTmGxact, true);
+	resetGxact();
 }
 
 /*
@@ -492,8 +490,8 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid, bool lockHeld)
 	}
 
 	/* Clear distributed transaction status for one-phase commit transaction */
-	if (Gp_role == GP_ROLE_EXECUTE && MyTmGxact->isOnePhaseCommit)
-		initGxact(MyTmGxact, false);
+	if (Gp_role == GP_ROLE_EXECUTE && MyTmGxactLocal->isOnePhaseCommit)
+		resetGxact();
 }
 
 
@@ -1748,9 +1746,8 @@ getAllDistributedXactStatus(TMGALLXACTSTATUS **allDistributedXactStatus)
 			TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
 
 			all->statusArray[i].gxid = gxact->gxid;
-			Assert(strlen(gxact->gid) < TMGIDSIZE);
-			memcpy(all->statusArray[i].gid, gxact->gid, TMGIDSIZE);
-			all->statusArray[i].state = gxact->state;
+			dtxFormGID(all->statusArray[i].gid, gxact->distribTimeStamp, gxact->gxid);
+			all->statusArray[i].state = 0; /* deprecate this field */
 			all->statusArray[i].sessionId = gxact->sessionId;
 			all->statusArray[i].xminDistributedSnapshot = gxact->xminDistributedSnapshot;
 		}
@@ -1804,9 +1801,8 @@ getDtxCheckPointInfo(char **result, int *result_size)
 
 	/*
 	 * If a transaction inserted 'commit' record logically before the checkpoint
-	 * REDO pointer, and it hasn't inserted the 'forget' record. we will see its
-	 * 'TMGXACT->state' is between 'DTX_STATE_INSERTED_COMMITTED' and
-	 * 'DTX_STATE_INSERTING_FORGET_COMMITTED'. such transactions should be included
+	 * REDO pointer, and it hasn't inserted the 'forget' record. we will see 
+	 * needIncludedInCkpt is true. such transactions should be included
 	 * in the checkpoint record so that the second phase of 2PC can be executed
 	 * during crash recovery.
 	 *
@@ -1821,35 +1817,17 @@ getDtxCheckPointInfo(char **result, int *result_size)
 	for (i = 0; i < arrayP->numProcs; i++)
 	{
 		TMGXACT_LOG *gxact_log;
-
-		/*
-		 * Note no 'volatile' is used to describe 'gxact'.  We will check
-		 * gxact->state first before memcpy gxact->gid. And the allowed state
-		 * are:
-		 * DTX_STATE_INSERTED_COMMITTED,
-		 * DTX_STATE_FORCED_COMMITTED,
-		 * DTX_STATE_NOTIFYING_COMMIT_PREPARED,
-		 * DTX_STATE_INSERTING_FORGET_COMMITTED,
-		 * DTX_STATE_RETRY_COMMIT_PREPARED.
-		 *
-		 * So this will not contend with setCurrentGxact, as it sets
-		 * gxact->state to DTX_STATE_ACTIVE_NOT_DISTRIBUTED after settling down
-		 * gxact->gid.
-		 */
 		TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
 
-		if (!includeInCheckpointIsNeeded(gxact))
+		if (!gxact->needIncludedInCkpt)
 			continue;
 
 		gxact_log = &gxact_log_array[actual];
-		if (strlen(gxact->gid) >= TMGIDSIZE)
-			elog(PANIC, "Distribute transaction identifier too long (%d)",
-				 (int) strlen(gxact->gid));
-		memcpy(gxact_log->gid, gxact->gid, TMGIDSIZE);
+		dtxFormGID(gxact_log->gid, gxact->distribTimeStamp, gxact->gxid);
 		gxact_log->gxid = gxact->gxid;
 
 		elog((Debug_print_full_dtm ? LOG : DEBUG5),
-			 "Add DTM checkpoint entry gid = %s.", gxact->gid);
+			 "Add DTM checkpoint entry gid = %s.", gxact_log->gid);
 
 		actual++;
 	}
@@ -1932,8 +1910,6 @@ CreateDistributedSnapshot(DistributedSnapshot *ds)
 		gxid = gxact_candidate->gxid;
 		if (gxid == InvalidDistributedTransactionId)
 			continue;
-
-		Assert(gxact_candidate->state != DTX_STATE_NONE);
 
 		/*
 		 * Include the current distributed transaction in the min/max
@@ -2541,6 +2517,50 @@ ProcArrayInstallImportedXmin(TransactionId xmin, TransactionId sourcexid)
 }
 
 /*
+ * ProcArrayInstallRestoredXmin -- install restored xmin into MyPgXact->xmin
+ *
+ * This is like ProcArrayInstallImportedXmin, but we have a pointer to the
+ * PGPROC of the transaction from which we imported the snapshot, rather than
+ * an XID.
+ *
+ * Returns TRUE if successful, FALSE if source xact is no longer running.
+ */
+bool
+ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
+{
+	bool		result = false;
+	TransactionId xid;
+	volatile PGXACT *pgxact;
+
+	Assert(TransactionIdIsNormal(xmin));
+	Assert(proc != NULL);
+
+	/* Get lock so source xact can't end while we're doing this */
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+
+	pgxact = &allPgXact[proc->pgprocno];
+
+	/*
+	 * Be certain that the referenced PGPROC has an advertised xmin which is
+	 * no later than the one we're installing, so that the system-wide xmin
+	 * can't go backwards.  Also, make sure it's running in the same database,
+	 * so that the per-database xmin cannot go backwards.
+	 */
+	xid = pgxact->xmin;			/* fetch just once */
+	if (proc->databaseId == MyDatabaseId &&
+		TransactionIdIsNormal(xid) &&
+		TransactionIdPrecedesOrEquals(xid, xmin))
+	{
+		MyPgXact->xmin = TransactionXmin = xmin;
+		result = true;
+	}
+
+	LWLockRelease(ProcArrayLock);
+
+	return result;
+}
+
+/*
  * GetRunningTransactionData -- returns information about running transactions.
  *
  * Similar to GetSnapshotData but returns more information. We include
@@ -2889,7 +2909,7 @@ GetOldestSafeDecodingTransactionId(bool catalogOnly)
  * the result is somewhat indeterminate, but we don't really care.  Even in
  * a multiprocessor with delayed writes to shared memory, it should be certain
  * that setting of delayChkpt will propagate to shared memory when the backend
- * takes a lock, so we cannot fail to see an virtual xact as delayChkpt if
+ * takes a lock, so we cannot fail to see a virtual xact as delayChkpt if
  * it's already inserted its commit record.  Whether it takes a little while
  * for clearing of delayChkpt to propagate is unimportant for correctness.
  */
@@ -4415,7 +4435,7 @@ KnownAssignedXidsRemovePreceding(TransactionId removeXid)
 
 	/*
 	 * Mark entries invalid starting at the tail.  Since array is sorted, we
-	 * can stop as soon as we reach a entry >= removeXid.
+	 * can stop as soon as we reach an entry >= removeXid.
 	 */
 	tail = pArray->tailKnownAssignedXids;
 	head = pArray->headKnownAssignedXids;

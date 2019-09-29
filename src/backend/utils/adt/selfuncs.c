@@ -12,7 +12,7 @@
  *
  * Portions Copyright (c) 2006-2009, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2014, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -111,6 +111,7 @@
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_constraint.h"
+#include "cdb/cdbgroup.h" /* cdbpathlocus_collocates_expressions */
 #include "executor/executor.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
@@ -199,7 +200,10 @@ static Datum string_to_datum(const char *str, Oid datatype);
 static Const *string_to_const(const char *str, Oid datatype);
 static Const *string_to_bytea_const(const char *str, size_t str_len);
 static List *add_predicate_to_quals(IndexOptInfo *index, List *indexQuals);
-
+static void try_fetch_rel_stats(RangeTblEntry *rte, const char *attname,
+								VariableStatData* vardata);
+static void try_fetch_largest_child_stats(PlannerInfo *root, RelOptInfo *parent_rel,
+										  const char *attname, VariableStatData* vardata);
 
 /*
  *		eqsel			- Selectivity of "=" for any data types.
@@ -3142,6 +3146,8 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
  *	groupExprs - list of expressions being grouped by
  *	input_rows - number of rows estimated to arrive at the group/unique
  *		filter step
+ *	pgset - NULL, or a List** pointing to a grouping set to filter the
+ *		groupExprs against
  *
  * Given the lack of any cross-correlation statistics in the system, it's
  * impossible to do anything really trustworthy with GROUP BY conditions
@@ -3189,11 +3195,13 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
  * but we don't have the info to do better).
  */
 double
-estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows)
+estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
+					List **pgset)
 {
 	List	   *varinfos = NIL;
 	double		numdistinct;
 	ListCell   *l;
+	int			i;
 
 	/*
 	 * We don't ever want to return an estimate of zero groups, as that tends
@@ -3208,7 +3216,7 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows)
 	 * for normal cases with GROUP BY or DISTINCT, but it is possible for
 	 * corner cases with set operations.)
 	 */
-	if (groupExprs == NIL)
+	if (groupExprs == NIL || (pgset && list_length(*pgset) < 1))
 		return 1.0;
 
 	/*
@@ -3220,12 +3228,17 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows)
 	 */
 	numdistinct = 1.0;
 
+	i = 0;
 	foreach(l, groupExprs)
 	{
 		Node	   *groupexpr = (Node *) lfirst(l);
 		VariableStatData vardata;
 		List	   *varshere;
 		ListCell   *l2;
+
+		/* is expression in this grouping set? */
+		if (pgset && !list_member_int(*pgset, i++))
+			continue;
 
 		/* Short-circuit for expressions returning boolean */
 		if (exprType(groupexpr) == BOOLOID)
@@ -3421,9 +3434,15 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows)
  * discourage use of a hash rather strongly if the inner relation is large,
  * which is what we want.  We do not want to hash unless we know that the
  * inner rel is well-dispersed (or the alternatives seem much worse).
+ *
+ * NB: Greenplum add an extra parameter path for this function, since
+ * Greenplum is MPP database consist of many segments, we have to use
+ * it to correct the estimation. For details, please refer the comments
+ * in the code.
  */
 Selectivity
-estimate_hash_bucketsize(PlannerInfo *root, Node *hashkey, double nbuckets)
+estimate_hash_bucketsize(PlannerInfo *root, Node *hashkey, double nbuckets,
+						 Path *path)
 {
 	VariableStatData vardata;
 	double		estfract,
@@ -3433,11 +3452,55 @@ estimate_hash_bucketsize(PlannerInfo *root, Node *hashkey, double nbuckets)
 				avgfreq;
 	AttStatsSlot sslot;
 	bool		isdefault;
+	int         numsegments = path->locus.numsegments;
 
 	examine_variable(root, hashkey, 0, &vardata);
 
 	/* Get number of distinct values */
 	ndistinct = get_variable_numdistinct(&vardata, &isdefault);
+
+	/*
+	 * Greenplum specific behavior: the above ndistinct is from
+	 * a global view. When estimating hash_bucketsize, we should
+	 * shift to a local view. For this function, rows is seen from
+	 * a global view, so to make compensation for it, we have to
+	 * multiply numsegments for some cases.
+	 */
+	if (CdbPathLocus_IsReplicated(path->locus) ||
+		CdbPathLocus_IsGeneral(path->locus) ||
+		CdbPathLocus_IsSegmentGeneral(path->locus))
+	{
+		/*
+		 * These types of locus means on each segment
+		 * we have ndistinct groups. Do the compensation by
+		 * multiply numsegments.
+		 */
+		ndistinct *= numsegments;
+	}
+	else
+	{
+		if (cdbpathlocus_collocates_expressions(root, path->locus,
+												list_make1(hashkey), false))
+		{
+			/*
+			 * This is the case the path's distribution is collcated with
+			 * the hash table's hash key, then on each segment, we only
+			 * contains (ndistinct/numsegments) distinct groups. So, no need
+			 * to do the compensation.
+			 */
+		}
+		else
+		{
+			Assert(CdbPathLocus_IsPartitioned(path->locus));
+			/*
+			 * This is the case the path's distribution is not collcated with
+			 * the hash table's hash key, then we use the following formula to
+			 * compute the number of distinct groups on each segment and then
+			 * do the compensation.
+			 */
+			ndistinct = estimate_num_groups_per_segment(ndistinct, path->rows, numsegments) * numsegments;
+		}
+	}
 
 	/* If ndistinct isn't real, punt and return 0.1, per comments above */
 	if (isdefault)
@@ -3612,6 +3675,8 @@ convert_to_scalar(Datum value, Oid valuetypid, double *scaledvalue,
 		case REGTYPEOID:
 		case REGCONFIGOID:
 		case REGDICTIONARYOID:
+		case REGROLEOID:
+		case REGNAMESPACEOID:
 			*scaledvalue = convert_numeric_to_scalar(value, valuetypid,
 													 &failure);
 			*scaledlobound = convert_numeric_to_scalar(lobound, boundstypid,
@@ -3725,6 +3790,8 @@ convert_numeric_to_scalar(Datum value, Oid typid, bool *failure)
 		case REGTYPEOID:
 		case REGCONFIGOID:
 		case REGDICTIONARYOID:
+		case REGROLEOID:
+		case REGNAMESPACEOID:
 			/* we can treat OIDs as integers... */
 			return (double) DatumGetObjectId(value);
 	}
@@ -4648,41 +4715,31 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 	}
 	else if (rte->inh)
 	{
-		RelOptInfo *rel = root->simple_rel_array[var->varno];
+		RelOptInfo   *rel      = root->simple_rel_array[var->varno];
+		const char *attname  = get_relid_attribute_name(rte->relid, var->varattno);
 
-		/*
-		 * If gp_statistics_pullup_from_child_partition is set, we attempt to pull up statistics from
-		 * the largest child partition in an inherited or a partitioned table.
-		 */
-		if (gp_statistics_pullup_from_child_partition  &&
-			rel->cheapest_total_path != NULL)
+		vardata->statsTuple = NULL;
+
+		if (gp_statistics_pullup_from_child_partition)
 		{
-			RelOptInfo *childrel = largest_child_relation(root, rel);
-			vardata->statsTuple = NULL;
-
-			if (childrel)
+			/*
+			 * The GUC gp_statistics_pullup_from_child_partition is
+			 * set false defaultly. If it is true, we always try
+			 * to use largest child's stat.
+			 */
+			try_fetch_largest_child_stats(root, rel, attname, vardata);
+		}
+		else
+		{
+			try_fetch_rel_stats(rte, attname, vardata);
+			if (vardata->statsTuple == NULL)
 			{
-				RangeTblEntry *child_rte = NULL;
-
-				child_rte = root->simple_rte_array[childrel->relid];
-
-				Assert(child_rte != NULL);
-				const char *attname = get_relid_attribute_name(rte->relid, var->varattno);
-				AttrNumber child_attno = get_attnum(child_rte->relid, attname);
-
 				/*
-				 * Get statistics from the child partition.
+				 * If root table does not have such stat info, we
+				 * try to use largest child partition's stat info
+				 * for the whole table.
 				 */
-				vardata->statsTuple = SearchSysCache3(STATRELATTINH,
-													  ObjectIdGetDatum(child_rte->relid),
-													  Int16GetDatum(child_attno),
-													  BoolGetDatum(child_rte->inh));
-
-				if (vardata->statsTuple != NULL)
-				{
-					adjust_partition_table_statistic_for_parent(vardata->statsTuple, childrel->tuples);
-				}
-				vardata->freefunc = ReleaseSysCache;
+				try_fetch_largest_child_stats(root, rel, attname, vardata);
 			}
 		}
 	}
@@ -6242,6 +6299,170 @@ string_to_bytea_const(const char *str, size_t str_len)
  */
 
 /*
+ * deconstruct_indexquals is a simple function to examine the indexquals
+ * attached to a proposed IndexPath.  It returns a list of IndexQualInfo
+ * structs, one per qual expression.
+ */
+typedef struct
+{
+	RestrictInfo *rinfo;		/* the indexqual itself */
+	int			indexcol;		/* zero-based index column number */
+	bool		varonleft;		/* true if index column is on left of qual */
+	Oid			clause_op;		/* qual's operator OID, if relevant */
+	Node	   *other_operand;	/* non-index operand of qual's operator */
+} IndexQualInfo;
+
+static List *
+deconstruct_indexquals(IndexPath *path)
+{
+	List	   *result = NIL;
+	IndexOptInfo *index = path->indexinfo;
+	ListCell   *lcc,
+			   *lci;
+
+	forboth(lcc, path->indexquals, lci, path->indexqualcols)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lcc);
+		int			indexcol = lfirst_int(lci);
+		Expr	   *clause;
+		Node	   *leftop,
+				   *rightop;
+		IndexQualInfo *qinfo;
+
+		Assert(IsA(rinfo, RestrictInfo));
+		clause = rinfo->clause;
+
+		qinfo = (IndexQualInfo *) palloc(sizeof(IndexQualInfo));
+		qinfo->rinfo = rinfo;
+		qinfo->indexcol = indexcol;
+
+		if (IsA(clause, OpExpr))
+		{
+			qinfo->clause_op = ((OpExpr *) clause)->opno;
+			leftop = get_leftop(clause);
+			rightop = get_rightop(clause);
+			if (match_index_to_operand(leftop, indexcol, index))
+			{
+				qinfo->varonleft = true;
+				qinfo->other_operand = rightop;
+			}
+			else
+			{
+				Assert(match_index_to_operand(rightop, indexcol, index));
+				qinfo->varonleft = false;
+				qinfo->other_operand = leftop;
+			}
+		}
+		else if (IsA(clause, RowCompareExpr))
+		{
+			RowCompareExpr *rc = (RowCompareExpr *) clause;
+
+			qinfo->clause_op = linitial_oid(rc->opnos);
+			/* Examine only first columns to determine left/right sides */
+			if (match_index_to_operand((Node *) linitial(rc->largs),
+									   indexcol, index))
+			{
+				qinfo->varonleft = true;
+				qinfo->other_operand = (Node *) rc->rargs;
+			}
+			else
+			{
+				Assert(match_index_to_operand((Node *) linitial(rc->rargs),
+											  indexcol, index));
+				qinfo->varonleft = false;
+				qinfo->other_operand = (Node *) rc->largs;
+			}
+		}
+		else if (IsA(clause, ScalarArrayOpExpr))
+		{
+			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
+
+			qinfo->clause_op = saop->opno;
+			/* index column is always on the left in this case */
+			Assert(match_index_to_operand((Node *) linitial(saop->args),
+										  indexcol, index));
+			qinfo->varonleft = true;
+			qinfo->other_operand = (Node *) lsecond(saop->args);
+		}
+		else if (IsA(clause, NullTest))
+		{
+			qinfo->clause_op = InvalidOid;
+			Assert(match_index_to_operand((Node *) ((NullTest *) clause)->arg,
+										  indexcol, index));
+			qinfo->varonleft = true;
+			qinfo->other_operand = NULL;
+		}
+		else
+		{
+			elog(ERROR, "unsupported indexqual type: %d",
+				 (int) nodeTag(clause));
+		}
+
+		result = lappend(result, qinfo);
+	}
+	return result;
+}
+
+/*
+ * Simple function to compute the total eval cost of the "other operands"
+ * in an IndexQualInfo list.  Since we know these will be evaluated just
+ * once per scan, there's no need to distinguish startup from per-row cost.
+ */
+static Cost
+other_operands_eval_cost(PlannerInfo *root, List *qinfos)
+{
+	Cost		qual_arg_cost = 0;
+	ListCell   *lc;
+
+	foreach(lc, qinfos)
+	{
+		IndexQualInfo *qinfo = (IndexQualInfo *) lfirst(lc);
+		QualCost	index_qual_cost;
+
+		cost_qual_eval_node(&index_qual_cost, qinfo->other_operand, root);
+		qual_arg_cost += index_qual_cost.startup + index_qual_cost.per_tuple;
+	}
+	return qual_arg_cost;
+}
+
+/*
+ * Get other-operand eval cost for an index orderby list.
+ *
+ * Index orderby expressions aren't represented as RestrictInfos (since they
+ * aren't boolean, usually).  So we can't apply deconstruct_indexquals to
+ * them.  However, they are much simpler to deal with since they are always
+ * OpExprs and the index column is always on the left.
+ */
+static Cost
+orderby_operands_eval_cost(PlannerInfo *root, IndexPath *path)
+{
+	Cost		qual_arg_cost = 0;
+	ListCell   *lc;
+
+	foreach(lc, path->indexorderbys)
+	{
+		Expr	   *clause = (Expr *) lfirst(lc);
+		Node	   *other_operand;
+		QualCost	index_qual_cost;
+
+		if (IsA(clause, OpExpr))
+		{
+			other_operand = get_rightop(clause);
+		}
+		else
+		{
+			elog(ERROR, "unsupported indexorderby type: %d",
+				 (int) nodeTag(clause));
+			other_operand = NULL;		/* keep compiler quiet */
+		}
+
+		cost_qual_eval_node(&index_qual_cost, other_operand, root);
+		qual_arg_cost += index_qual_cost.startup + index_qual_cost.per_tuple;
+	}
+	return qual_arg_cost;
+}
+
+/*
  * genericcostestimate is a general-purpose estimator that can be used for
  * most index types.  In some cases we use genericcostestimate as the base
  * code and then incorporate additional index-type-specific knowledge in
@@ -6273,6 +6494,7 @@ static void
 genericcostestimate(PlannerInfo *root,
 					IndexPath *path,
 					double loop_count,
+					List *qinfos,
 					GenericCosts *costs)
 {
 	IndexOptInfo *index = path->indexinfo;
@@ -6288,7 +6510,6 @@ genericcostestimate(PlannerInfo *root,
 	double		num_sa_scans;
 	double		num_outer_scans;
 	double		num_scans;
-	QualCost	index_qual_cost;
 	double		qual_op_cost;
 	double		qual_arg_cost;
 	List	   *selectivityQuals;
@@ -6374,7 +6595,7 @@ genericcostestimate(PlannerInfo *root,
 	else
 		numIndexPages = 1.0;
 
-	/* fetch estimated page cost for schema containing index */
+	/* fetch estimated page cost for tablespace containing index */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
 							  NULL);
@@ -6443,15 +6664,10 @@ genericcostestimate(PlannerInfo *root,
 	 * Detecting that that might be needed seems more expensive than it's
 	 * worth, though, considering all the other inaccuracies here ...
 	 */
-	cost_qual_eval(&index_qual_cost, indexQuals, root);
-	qual_arg_cost = index_qual_cost.startup + index_qual_cost.per_tuple;
-	cost_qual_eval(&index_qual_cost, indexOrderBys, root);
-	qual_arg_cost += index_qual_cost.startup + index_qual_cost.per_tuple;
+	qual_arg_cost = other_operands_eval_cost(root, qinfos) +
+		orderby_operands_eval_cost(root, path);
 	qual_op_cost = cpu_operator_cost *
 		(list_length(indexQuals) + list_length(indexOrderBys));
-	qual_arg_cost -= qual_op_cost;
-	if (qual_arg_cost < 0)		/* just in case... */
-		qual_arg_cost = 0;
 
 	indexStartupCost = qual_arg_cost;
 	indexTotalCost += qual_arg_cost;
@@ -6527,6 +6743,7 @@ btcostestimate(PG_FUNCTION_ARGS)
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
+	List	   *qinfos;
 	GenericCosts costs;
 	Oid			relid;
 	AttrNumber	colnum;
@@ -6539,8 +6756,10 @@ btcostestimate(PG_FUNCTION_ARGS)
 	bool		found_saop;
 	bool		found_is_null_op;
 	double		num_sa_scans;
-	ListCell   *lcc,
-			   *lci;
+	ListCell   *lc;
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
 
     /*
      * CDB: Tell caller how many leading indexcols are matched by '=' quals.
@@ -6574,83 +6793,54 @@ btcostestimate(PG_FUNCTION_ARGS)
 	found_saop = false;
 	found_is_null_op = false;
 	num_sa_scans = 1;
-	forboth(lcc, path->indexquals, lci, path->indexqualcols)
+	foreach(lc, qinfos)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lcc);
-		Expr	   *clause;
-		Node	   *leftop,
-				   *rightop PG_USED_FOR_ASSERTS_ONLY;
+		IndexQualInfo *qinfo = (IndexQualInfo *) lfirst(lc);
+		RestrictInfo *rinfo = qinfo->rinfo;
+		Expr	   *clause = rinfo->clause;
 		Oid			clause_op;
 		int			op_strategy;
-		bool		is_null_op = false;
 
-		if (indexcol != lfirst_int(lci))
+		if (indexcol != qinfo->indexcol)
 		{
 			/* Beginning of a new column's quals */
 			if (!eqQualHere)
 				break;			/* done if no '=' qual for indexcol */
 			eqQualHere = false;
 			indexcol++;
-			if (indexcol != lfirst_int(lci))
+			if (indexcol != qinfo->indexcol)
 				break;			/* no quals at all for indexcol */
 		}
 
-		Assert(IsA(rinfo, RestrictInfo));
-		clause = rinfo->clause;
-
-		if (IsA(clause, OpExpr))
+		if (IsA(clause, ScalarArrayOpExpr))
 		{
-			leftop = get_leftop(clause);
-			rightop = get_rightop(clause);
-			clause_op = ((OpExpr *) clause)->opno;
-		}
-		else if (IsA(clause, RowCompareExpr))
-		{
-			RowCompareExpr *rc = (RowCompareExpr *) clause;
+			int			alength = estimate_array_length(qinfo->other_operand);
 
-			leftop = (Node *) linitial(rc->largs);
-			rightop = (Node *) linitial(rc->rargs);
-			clause_op = linitial_oid(rc->opnos);
-		}
-		else if (IsA(clause, ScalarArrayOpExpr))
-		{
-			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
-
-			leftop = (Node *) linitial(saop->args);
-			rightop = (Node *) lsecond(saop->args);
-			clause_op = saop->opno;
 			found_saop = true;
+			/* count up number of SA scans induced by indexBoundQuals only */
+			if (alength > 1)
+				num_sa_scans *= alength;
 		}
 		else if (IsA(clause, NullTest))
 		{
 			NullTest   *nt = (NullTest *) clause;
 
-			leftop = (Node *) nt->arg;
-			rightop = NULL;
-			clause_op = InvalidOid;
 			if (nt->nulltesttype == IS_NULL)
 			{
 				found_is_null_op = true;
-				is_null_op = true;
+				/* IS NULL is like = for selectivity determination purposes */
+				eqQualHere = true;
+				/* CDB: Count leading indexcols having '=' quals. */
+				index->num_leading_eq = indexcol + 1;
 			}
 		}
-		else
-		{
-			elog(ERROR, "unsupported indexqual type: %d",
-				 (int) nodeTag(clause));
-			continue;			/* keep compiler quiet */
-		}
 
-		if (match_index_to_operand(leftop, indexcol, index))
-		{
-			/* clause_op is correct */
-		}
-		else
-		{
-			Assert(match_index_to_operand(rightop, indexcol, index));
-			/* Must flip operator to get the opfamily member */
-			clause_op = get_commutator(clause_op);
-		}
+		/*
+		 * We would need to commute the clause_op if not varonleft, except
+		 * that we only care if it's equality or not, so that refinement is
+		 * unnecessary.
+		 */
+		clause_op = qinfo->clause_op;
 
 		/* check for equality operator */
 		if (OidIsValid(clause_op))
@@ -6667,24 +6857,7 @@ btcostestimate(PG_FUNCTION_ARGS)
 					index->num_leading_eq = indexcol + 1;
 			}
 		}
-		else if (is_null_op)
-		{
-			/* IS NULL is like = for purposes of selectivity determination */
-			eqQualHere = true;
 
-            /* CDB: Count leading indexcols having '=' quals. */
-            if (!IsA(clause, ScalarArrayOpExpr))
-                index->num_leading_eq = indexcol + 1;
-		}
-		/* count up number of SA scans induced by indexBoundQuals only */
-		if (IsA(clause, ScalarArrayOpExpr))
-		{
-			ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
-			int			alength = estimate_array_length(lsecond(saop->args));
-
-			if (alength > 1)
-				num_sa_scans *= alength;
-		}
 		indexBoundQuals = lappend(indexBoundQuals, rinfo);
 	}
 
@@ -6733,7 +6906,7 @@ btcostestimate(PG_FUNCTION_ARGS)
 	MemSet(&costs, 0, sizeof(costs));
 	costs.numIndexTuples = numIndexTuples;
 
-	genericcostestimate(root, path, loop_count, &costs);
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
 
 	/*
 	 * Add a CPU-cost component to represent the costs of initial btree
@@ -6885,11 +7058,15 @@ hashcostestimate(PG_FUNCTION_ARGS)
 	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
+	List	   *qinfos;
 	GenericCosts costs;
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
 
 	MemSet(&costs, 0, sizeof(costs));
 
-	genericcostestimate(root, path, loop_count, &costs);
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
 
 	/*
 	 * A hash index has no descent costs as such, since the index AM can go
@@ -6935,12 +7112,16 @@ gistcostestimate(PG_FUNCTION_ARGS)
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
+	List	   *qinfos;
 	GenericCosts costs;
 	Cost		descentCost;
 
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
+
 	MemSet(&costs, 0, sizeof(costs));
 
-	genericcostestimate(root, path, loop_count, &costs);
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
 
 	/*
 	 * We model index descent costs similarly to those for btree, but to do
@@ -6997,12 +7178,16 @@ spgcostestimate(PG_FUNCTION_ARGS)
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
+	List	   *qinfos;
 	GenericCosts costs;
 	Cost		descentCost;
 
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
+
 	MemSet(&costs, 0, sizeof(costs));
 
-	genericcostestimate(root, path, loop_count, &costs);
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
 
 	/*
 	 * We model index descent costs similarly to those for btree, but to do
@@ -7061,21 +7246,6 @@ typedef struct
 	double		searchEntries;
 	double		arrayScans;
 } GinQualCounts;
-
-/* Find the index column matching "op"; return its index, or -1 if no match */
-static int
-find_index_column(Node *op, IndexOptInfo *index)
-{
-	int			i;
-
-	for (i = 0; i < index->ncolumns; i++)
-	{
-		if (match_index_to_operand(op, i, index))
-			return i;
-	}
-
-	return -1;
-}
 
 /*
  * Estimate the number of index terms that need to be searched for while
@@ -7185,29 +7355,19 @@ gincost_pattern(IndexOptInfo *index, int indexcol,
  * appropriately.  If the query is unsatisfiable, return false.
  */
 static bool
-gincost_opexpr(PlannerInfo *root, IndexOptInfo *index, OpExpr *clause,
+gincost_opexpr(PlannerInfo *root,
+			   IndexOptInfo *index,
+			   IndexQualInfo *qinfo,
 			   GinQualCounts *counts)
 {
-	Node	   *leftop = get_leftop((Expr *) clause);
-	Node	   *rightop = get_rightop((Expr *) clause);
-	Oid			clause_op = clause->opno;
-	int			indexcol;
-	Node	   *operand;
+	int			indexcol = qinfo->indexcol;
+	Oid			clause_op = qinfo->clause_op;
+	Node	   *operand = qinfo->other_operand;
 
-	/* Locate the operand being compared to the index column */
-	if ((indexcol = find_index_column(leftop, index)) >= 0)
+	if (!qinfo->varonleft)
 	{
-		operand = rightop;
-	}
-	else if ((indexcol = find_index_column(rightop, index)) >= 0)
-	{
-		operand = leftop;
+		/* must commute the operator */
 		clause_op = get_commutator(clause_op);
-	}
-	else
-	{
-		elog(ERROR, "could not match index to operand");
-		operand = NULL;			/* keep compiler quiet */
 	}
 
 	/* aggressively reduce to a constant, and look through relabeling */
@@ -7252,14 +7412,14 @@ gincost_opexpr(PlannerInfo *root, IndexOptInfo *index, OpExpr *clause,
  */
 static bool
 gincost_scalararrayopexpr(PlannerInfo *root,
-						  IndexOptInfo *index, ScalarArrayOpExpr *clause,
+						  IndexOptInfo *index,
+						  IndexQualInfo *qinfo,
 						  double numIndexEntries,
 						  GinQualCounts *counts)
 {
-	Node	   *leftop = (Node *) linitial(clause->args);
-	Node	   *rightop = (Node *) lsecond(clause->args);
-	Oid			clause_op = clause->opno;
-	int			indexcol;
+	int			indexcol = qinfo->indexcol;
+	Oid			clause_op = qinfo->clause_op;
+	Node	   *rightop = qinfo->other_operand;
 	ArrayType  *arrayval;
 	int16		elmlen;
 	bool		elmbyval;
@@ -7271,11 +7431,7 @@ gincost_scalararrayopexpr(PlannerInfo *root,
 	int			numPossible = 0;
 	int			i;
 
-	Assert(clause->useOr);
-
-	/* index column must be on the left */
-	if ((indexcol = find_index_column(leftop, index)) < 0)
-		elog(ERROR, "could not match index to operand");
+	Assert(((ScalarArrayOpExpr *) qinfo->rinfo->clause)->useOr);
 
 	/* aggressively reduce to a constant, and look through relabeling */
 	rightop = estimate_expression_value(root, rightop);
@@ -7382,6 +7538,7 @@ gincostestimate(PG_FUNCTION_ARGS)
 	IndexOptInfo *index = path->indexinfo;
 	List	   *indexQuals = path->indexquals;
 	List	   *indexOrderBys = path->indexorderbys;
+	List	   *qinfos;
 	ListCell   *l;
 	List	   *selectivityQuals;
 	double		numPages = index->pages,
@@ -7400,9 +7557,11 @@ gincostestimate(PG_FUNCTION_ARGS)
 				qual_arg_cost,
 				spc_random_page_cost,
 				outer_scans;
-	QualCost	index_qual_cost;
 	Relation	indexRel;
 	GinStatsData ginStats;
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
 
 	/*
 	 * Obtain statistical information from the meta page, if possible.  Else
@@ -7508,7 +7667,7 @@ gincostestimate(PG_FUNCTION_ARGS)
 											   NULL,
 											   false);
 
-	/* fetch estimated page cost for schema containing index */
+	/* fetch estimated page cost for tablespace containing index */
 	get_tablespace_page_costs(index->reltablespace,
 							  &spc_random_page_cost,
 							  NULL);
@@ -7525,18 +7684,16 @@ gincostestimate(PG_FUNCTION_ARGS)
 	counts.arrayScans = 1;
 	matchPossible = true;
 
-	foreach(l, indexQuals)
+	foreach(l, qinfos)
 	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
-		Expr	   *clause;
+		IndexQualInfo *qinfo = (IndexQualInfo *) lfirst(l);
+		Expr	   *clause = qinfo->rinfo->clause;
 
-		Assert(IsA(rinfo, RestrictInfo));
-		clause = rinfo->clause;
 		if (IsA(clause, OpExpr))
 		{
 			matchPossible = gincost_opexpr(root,
 										   index,
-										   (OpExpr *) clause,
+										   qinfo,
 										   &counts);
 			if (!matchPossible)
 				break;
@@ -7545,7 +7702,7 @@ gincostestimate(PG_FUNCTION_ARGS)
 		{
 			matchPossible = gincost_scalararrayopexpr(root,
 													  index,
-												(ScalarArrayOpExpr *) clause,
+													  qinfo,
 													  numEntries,
 													  &counts);
 			if (!matchPossible)
@@ -7684,15 +7841,10 @@ gincostestimate(PG_FUNCTION_ARGS)
 	/*
 	 * Add on index qual eval costs, much as in genericcostestimate
 	 */
-	cost_qual_eval(&index_qual_cost, indexQuals, root);
-	qual_arg_cost = index_qual_cost.startup + index_qual_cost.per_tuple;
-	cost_qual_eval(&index_qual_cost, indexOrderBys, root);
-	qual_arg_cost += index_qual_cost.startup + index_qual_cost.per_tuple;
+	qual_arg_cost = other_operands_eval_cost(root, qinfos) +
+		orderby_operands_eval_cost(root, path);
 	qual_op_cost = cpu_operator_cost *
 		(list_length(indexQuals) + list_length(indexOrderBys));
-	qual_arg_cost -= qual_op_cost;
-	if (qual_arg_cost < 0)		/* just in case... */
-		qual_arg_cost = 0;
 
 	*indexStartupCost += qual_arg_cost;
 	*indexTotalCost += qual_arg_cost;
@@ -7711,6 +7863,7 @@ bmcostestimate(PG_FUNCTION_ARGS)
 	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
 	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
 	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
+	List	   *qinfos;
 	GenericCosts costs;
 
 	List *selectivityQuals;
@@ -7765,12 +7918,16 @@ bmcostestimate(PG_FUNCTION_ARGS)
 		groupExprs = list_concat_unique(groupExprs, path->indexinfo->indexprs);
 
 	Assert(groupExprs != NULL);
-	numDistinctValues = estimate_num_groups(root, groupExprs, path->indexinfo->rel->rows);
+	numDistinctValues = estimate_num_groups(root, groupExprs, path->indexinfo->rel->rows,
+											NULL);
 	if (numDistinctValues == 0)
 		numDistinctValues = 1;
 
 	numIndexTuples = *indexSelectivity * path->indexinfo->rel->tuples;
 	numIndexTuples = rint(numIndexTuples / numDistinctValues);
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
 
 	/*
 	 * Now do generic index cost estimation.
@@ -7778,7 +7935,7 @@ bmcostestimate(PG_FUNCTION_ARGS)
 	MemSet(&costs, 0, sizeof(costs));
 	costs.numIndexTuples = numIndexTuples;
 
-	genericcostestimate(root, path, loop_count, &costs);
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
 
 	*indexStartupCost = costs.indexStartupCost;
 	*indexTotalCost = costs.indexTotalCost;
@@ -7786,4 +7943,140 @@ bmcostestimate(PG_FUNCTION_ARGS)
 	*indexCorrelation = costs.indexCorrelation;
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * BRIN has search behavior completely different from other index types
+ */
+Datum
+brincostestimate(PG_FUNCTION_ARGS)
+{
+	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
+	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
+	double		loop_count = PG_GETARG_FLOAT8(2);
+	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
+	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
+	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
+	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
+	IndexOptInfo *index = path->indexinfo;
+	List	   *indexQuals = path->indexquals;
+	List	   *indexOrderBys = path->indexorderbys;
+	double		numPages = index->pages;
+	double		numTuples = index->tuples;
+	List	   *qinfos;
+	Cost		spc_seq_page_cost;
+	Cost		spc_random_page_cost;
+	double		qual_op_cost;
+	double		qual_arg_cost;
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
+
+	/* fetch estimated page cost for tablespace containing index */
+	get_tablespace_page_costs(index->reltablespace,
+							  &spc_random_page_cost,
+							  &spc_seq_page_cost);
+
+	/*
+	 * BRIN indexes are always read in full; use that as startup cost.
+	 *
+	 * XXX maybe only include revmap pages here?
+	 */
+	*indexStartupCost = spc_seq_page_cost * numPages * loop_count;
+
+	/*
+	 * To read a BRIN index there might be a bit of back and forth over
+	 * regular pages, as revmap might point to them out of sequential order;
+	 * calculate this as reading the whole index in random order.
+	 */
+	*indexTotalCost = spc_random_page_cost * numPages * loop_count;
+
+	*indexSelectivity =
+		clauselist_selectivity(root, indexQuals,
+							   path->indexinfo->rel->relid,
+							   JOIN_INNER, NULL, false);
+	*indexCorrelation = 1;
+
+	/*
+	 * Add on index qual eval costs, much as in genericcostestimate.
+	 */
+	qual_arg_cost = other_operands_eval_cost(root, qinfos) +
+		orderby_operands_eval_cost(root, path);
+	qual_op_cost = cpu_operator_cost *
+		(list_length(indexQuals) + list_length(indexOrderBys));
+
+	*indexStartupCost += qual_arg_cost;
+	*indexTotalCost += qual_arg_cost;
+	*indexTotalCost += (numTuples * *indexSelectivity) * (cpu_index_tuple_cost + qual_op_cost);
+
+	/* XXX what about pages_per_range? */
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * estimate_num_groups_per_segment
+ *
+ *   - groupNum   : the number of groups globally
+ *   - rows       : the number of tuples globally
+ *   - numsegments: the number of all segments in the cluster
+ *
+ * Estimate how many groups are on each segment, when the group keys do not contain
+ * distribution keys. Understand such condition, we can consider data is roughly
+ * random-distributed among all segments. The accurate formula to compute the
+ * expectation is (1-((numsegments-1)/numsegments)^(rows/groupNum))*groupNum.
+ *
+ * The above formula can be deduced using indicate-variable method. Let's focus on
+ * one specific segment, say seg0, and let Xi be a random variable:
+ *   - Xi = 1, seg0 contains tuple from group i
+ *   - Xi = 0, seg0 does not contain tuple from group i
+ * E(X1+X2+...+X_groupNum) is just what we want to compute. Thus the formula
+ * is easy to prove.
+ */
+double
+estimate_num_groups_per_segment(double groupNum, double rows, double numsegments)
+{
+	double numPerGroup = rows / groupNum;
+	double group_num;
+	group_num = (1-pow((numsegments-1)/numsegments, numPerGroup))*groupNum;
+	return group_num;
+}
+
+static void
+try_fetch_rel_stats(RangeTblEntry *rte, const char *attname, VariableStatData* vardata)
+{
+	AttrNumber attno;
+
+	Assert(rte != NULL);
+
+	attno = get_attnum(rte->relid, attname);
+	vardata->statsTuple = SearchSysCache3(STATRELATTINH,
+										  ObjectIdGetDatum(rte->relid),
+										  Int16GetDatum(attno),
+										  BoolGetDatum(rte->inh));
+	vardata->freefunc = ReleaseSysCache;
+}
+
+static void
+try_fetch_largest_child_stats(PlannerInfo *root, RelOptInfo *parent_rel,
+							  const char *attname, VariableStatData* vardata)
+{
+	RelOptInfo *child_rel = NULL;
+
+	if (parent_rel->cheapest_total_path == NULL)
+		return;
+
+	child_rel = largest_child_relation(root, parent_rel);
+	if (child_rel)
+	{
+		RangeTblEntry *child_rte = NULL;
+
+		child_rte = root->simple_rte_array[child_rel->relid];
+		try_fetch_rel_stats(child_rte, attname, vardata);
+		if (vardata->statsTuple != NULL)
+		{
+			adjust_partition_table_statistic_for_parent(vardata->statsTuple,
+														child_rel->tuples);
+		}
+	}
 }

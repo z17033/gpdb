@@ -1989,6 +1989,22 @@ set optimizer_enable_streaming_material = off;
 select c1 from t_outer where not c1 =all (select c2 from t_inner);
 reset optimizer_enable_streaming_material;
 
+-- Ensure that ORCA rescans the subquery in case of skip-level correlation with
+-- materialization
+drop table if exists wst0, wst1, wst2;
+
+create table wst0(a0 int, b0 int);
+create table wst1(a1 int, b1 int);
+create table wst2(a2 int, b2 int);
+
+insert into wst0 select i, i from generate_series(1,10) i;
+insert into wst1 select i, i from generate_series(1,10) i;
+insert into wst2 select i, i from generate_series(1,10) i;
+
+-- NB: the rank() is need to force materialization (via Sort) in the subplan
+select count(*) from wst0 where exists (select 1, rank() over (order by wst1.a1) from wst1 where a1 = (select b2 from wst2 where a0=a2+5));
+
+
 --
 -- Test to ensure sane behavior when DML queries are optimized by ORCA by
 -- enforcing a non-master gather motion, controlled by
@@ -2127,6 +2143,83 @@ CREATE TABLE ffoo (a, b) AS (VALUES (1, 2), (2, 3), (4, 5), (5, 6), (6, 7)) DIST
 CREATE TABLE fbar (c, d) AS (VALUES (1, 42), (2, 43), (4, 45), (5, 46)) DISTRIBUTED BY (c);
 
 SELECT d FROM ffoo FULL OUTER JOIN fbar ON a = c WHERE b BETWEEN 5 and 9;
+
+-- test index left outer joins on bitmap and btree indexes on partitioned tables with and without select clause
+DROP TABLE IF EXISTS touter, tinner;
+CREATE TABLE touter(a int, b int) DISTRIBUTED BY (a);
+CREATE TABLE tinnerbitmap(a int, b int) DISTRIBUTED BY (a) PARTITION BY range(b) (start (0) end (6) every (3));
+CREATE TABLE tinnerbtree(a int, b int) DISTRIBUTED BY (a) PARTITION BY range(b) (start (0) end (6) every (3));
+
+INSERT INTO touter SELECT i, i%6 FROM generate_series(1,10) i;
+INSERT INTO tinnerbitmap select i, i%6 FROM generate_series(1,1000) i;
+INSERT INTO tinnerbtree select i, i%6 FROM generate_series(1,1000) i;
+CREATE INDEX tinnerbitmap_ix ON tinnerbitmap USING bitmap(a);
+CREATE INDEX tinnerbtree_ix ON tinnerbtree USING btree(a);
+
+SELECT * FROM touter LEFT JOIN tinnerbitmap ON touter.a = tinnerbitmap.a;
+SELECT * FROM touter LEFT JOIN tinnerbitmap ON touter.a = tinnerbitmap.a AND tinnerbitmap.b=10;
+
+SELECT * FROM touter LEFT JOIN tinnerbtree ON touter.a = tinnerbtree.a;
+SELECT * FROM touter LEFT JOIN tinnerbtree ON touter.a = tinnerbtree.a AND tinnerbtree.b=10;
+
+-- test subplan in a qual under dynamic scan
+CREATE TABLE ds_part ( a INT, b INT, c INT) PARTITION BY RANGE(c)( START(1) END (10) EVERY (2), DEFAULT PARTITION deflt);
+CREATE TABLE non_part1 (c INT);
+CREATE TABLE non_part2 (e INT, f INT);
+
+INSERT INTO ds_part SELECT i, i, i FROM generate_series (1, 1000)i; 
+INSERT INTO non_part1 SELECT i FROM generate_series(1, 100)i; 
+INSERT INTO non_part2 SELECT i, i FROM generate_series(1, 100)i;
+
+SET optimizer_enforce_subplans TO ON;
+analyze ds_part;
+analyze non_part1;
+analyze non_part2;
+SELECT * FROM ds_part, non_part2 WHERE ds_part.c = non_part2.e AND non_part2.f = 10 AND a IN ( SELECT b + 1 FROM non_part1);
+explain SELECT * FROM ds_part, non_part2 WHERE ds_part.c = non_part2.e AND non_part2.f = 10 AND a IN ( SELECT b + 1 FROM non_part1);
+
+SELECT *, a IN ( SELECT b + 1 FROM non_part1) FROM ds_part, non_part2 WHERE ds_part.c = non_part2.e AND non_part2.f = 10 AND a IN ( SELECT b FROM non_part1);
+CREATE INDEX ds_idx ON ds_part(a);
+analyze ds_part;
+SELECT *, a IN ( SELECT b + 1 FROM non_part1) FROM ds_part, non_part2 WHERE ds_part.c = non_part2.e AND non_part2.f = 10 AND a IN ( SELECT b FROM non_part1);
+
+RESET optimizer_enforce_subplans;
+-- implied predicate must be generated for the type cast(ident) scalar array cmp const array
+CREATE TABLE varchar_sc_array_cmp(a varchar);
+INSERT INTO varchar_sc_array_cmp VALUES ('a'), ('b'), ('c'), ('d');
+EXPLAIN SELECT * FROM varchar_sc_array_cmp t1, varchar_sc_array_cmp t2 where t1.a = t2.a and t1.a in ('b', 'c');
+SELECT * FROM varchar_sc_array_cmp t1, varchar_sc_array_cmp t2 where t1.a = t2.a and t1.a in ('b', 'c');
+SET optimizer_array_constraints=on;
+EXPLAIN SELECT * FROM varchar_sc_array_cmp t1, varchar_sc_array_cmp t2 where t1.a = t2.a and (t1.a in ('b', 'c') OR t1.a = 'a');
+SELECT * FROM varchar_sc_array_cmp t1, varchar_sc_array_cmp t2 where t1.a = t2.a and (t1.a in ('b', 'c') OR t1.a = 'a');
+DROP TABLE varchar_sc_array_cmp;
+
+-- table constraints on nullable columns
+-- start_ignore
+DROP TABLE IF EXISTS tc0, tc1, tc2, tc3, tc4;
+-- end_ignore
+CREATE TABLE tc0 (a int check (a = 5));
+INSERT INTO tc0 VALUES (NULL);
+-- FIXME: Planner gives wrong result
+SELECT * from tc0 where a IS NULL;
+
+CREATE TABLE tc1 (a int check (a between 1 and 2 or a != 3 and a > 5));
+INSERT INTO tc1 VALUES (NULL);
+SELECT * from tc1 where a IS NULL;
+
+CREATE TABLE tc2 (a int check (a in (1,2)));
+INSERT INTO tc2 VALUES (NULL);
+SELECT * from tc2 where a IS NULL;
+
+set optimizer_array_constraints = on;
+CREATE TABLE tc3 (a int check (a = ANY (ARRAY[1,2])));
+INSERT INTO tc3 VALUES (NULL);
+SELECT * from tc3 where a IS NULL;
+reset optimizer_array_constraints;
+
+CREATE TABLE tc4 (a int, b int, check(a + b > 1 and a = b));
+INSERT INTO tc4 VALUES(NULL, NULL);
+SELECT * from tc4 where a IS NULL;
 
 -- start_ignore
 DROP SCHEMA orca CASCADE;

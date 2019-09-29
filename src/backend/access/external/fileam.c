@@ -88,7 +88,6 @@ static int	external_getdata_callback(void *outbuf, int datasize, void *extra);
 static int	external_getdata(URL_FILE *extfile, CopyState pstate, void *outbuf, int maxread);
 static void external_senddata(URL_FILE *extfile, CopyState pstate);
 static void external_scan_error_callback(void *arg);
-static List *parseCopyFormatString(Relation rel, char *fmtstr, char fmttype);
 static void parseCustomFormatString(char *fmtstr, char **formatter_name, List **formatter_params);
 static Oid lookupCustomFormatter(char *formatter_name, bool iswritable);
 static void justifyDatabuf(StringInfo buf);
@@ -98,7 +97,6 @@ static char *get_eol_delimiter(List *params);
 static void external_set_env_vars_ext(extvar_t *extvar, char *uri, bool csv, char *escape,
 				 char *quote, int eol_type, bool header, uint32 scancounter, List *params);
 
-static List *appendCopyEncodingOption(List *copyFmtOpts, int encoding);
 
 /* ----------------------------------------------------------------
 *				   external_ interface functions
@@ -902,6 +900,7 @@ externalgettup_custom(FileScanDesc scan)
 	MemoryContext oldctxt = CurrentMemoryContext;
 
 	Assert(formatter);
+	Assert(pstate->raw_buf_len >= 0);
 
 	/* while didn't finish processing the entire file */
 	/* raw_buf_len was set to 0 in BeginCopyFrom() or external_rescan() */
@@ -924,7 +923,7 @@ externalgettup_custom(FileScanDesc scan)
 		}
 
 		/* while there is still data in our buffer */
-		while (pstate->raw_buf_len != 0)
+		while (pstate->raw_buf_len > 0)
 		{
 			bool		error_caught = false;
 
@@ -1059,7 +1058,7 @@ externalgettup_custom(FileScanDesc scan)
 */
 static HeapTuple
 externalgettup(FileScanDesc scan,
-               ScanDirection dir __attribute__((unused)))
+               ScanDirection dir pg_attribute_unused())
 {
 	bool		custom = (scan->fs_custom_formatter_func != NULL);
 	HeapTuple	tup = NULL;
@@ -1873,7 +1872,7 @@ strtokx2(const char *s,
 	return start;
 }
 
-static List *
+List *
 parseCopyFormatString(Relation rel, char *fmtstr, char fmttype)
 {
 	char	   *token;
@@ -2228,7 +2227,7 @@ external_set_env_vars_ext(extvar_t *extvar, char *uri, bool csv, char *escape, c
 	extvar->GP_DATABASE = get_database_name(MyDatabaseId);
 	extvar->GP_SEG_PG_CONF = ConfigFileName;	/* location of the segments
 												 * pg_conf file  */
-	extvar->GP_SEG_DATADIR = data_directory;	/* location of the segments
+	extvar->GP_SEG_DATADIR = DataDir;	/* location of the segments
 												 * datadirectory */
 	sprintf(extvar->GP_DATE, "%04d%02d%02d",
 			1900 + tm->tm_year, 1 + tm->tm_mon, tm->tm_mday);
@@ -2291,7 +2290,7 @@ external_set_env_vars_ext(extvar_t *extvar, char *uri, bool csv, char *escape, c
 	sprintf(extvar->GP_LINE_DELIM_LENGTH, "%d", line_delim_len);
 }
 
-static List *
+List *
 appendCopyEncodingOption(List *copyFmtOpts, int encoding)
 {
 	return lappend(copyFmtOpts, makeDefElem("encoding", (Node *)makeString((char *)pg_encoding_to_char(encoding))));

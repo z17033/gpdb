@@ -501,7 +501,7 @@ create_endpoint_info_dsm() {
     dsm_segment *dsm_seg = NULL;
 
 	size = mul_size(MAX_ENDPOINT_SIZE, sizeof(EndpointDesc));
-    dsm_seg = dsm_create(size);
+    dsm_seg = dsm_create(size, 0);
     return dsm_seg;
 }
 
@@ -515,7 +515,7 @@ create_token_info_dsm() {
 	dsm_segment *dsm_seg = NULL;
 
 	size = mul_size(MAX_ENDPOINT_SIZE, sizeof(ParallelCursorTokenDesc));
-	dsm_seg = dsm_create(size);
+	dsm_seg = dsm_create(size, 0);
 	return dsm_seg;
 }
 
@@ -1186,7 +1186,7 @@ create_and_connect_mq(TupleDesc tupleDesc)
     toc_size = shm_toc_estimate(&toc_est);
 
     LWLockAcquire(EndpointsDSMLWLock, LW_EXCLUSIVE);
-    dsm_seg = dsm_create(toc_size);
+    dsm_seg = dsm_create(toc_size, 0);
     if (dsm_seg == NULL) {
         LWLockRelease(EndpointsDSMLWLock);
         sender_close();

@@ -3,7 +3,7 @@
  * aclchk.c
  *	  Routines to check access control permissions.
  *
- * Portions Copyright (c) 1996-2014, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -51,6 +51,7 @@
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_dict.h"
 #include "commands/dbcommands.h"
+#include "commands/event_trigger.h"
 #include "commands/proclang.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
@@ -60,6 +61,7 @@
 #include "parser/parse_func.h"
 #include "parser/parse_type.h"
 #include "utils/acl.h"
+#include "utils/aclchk_internal.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
@@ -78,32 +80,6 @@
  * anything.
  */
 bool		revoked_something = false;
-
-/*
- * The information about one Grant/Revoke statement, in internal format: object
- * and grantees names have been turned into Oids, the privilege list is an
- * AclMode bitmask.  If 'privileges' is ACL_NO_RIGHTS (the 0 value) and
- * all_privs is true, 'privileges' will be internally set to the right kind of
- * ACL_ALL_RIGHTS_*, depending on the object type (NB - this will modify the
- * InternalGrant struct!)
- *
- * Note: 'all_privs' and 'privileges' represent object-level privileges only.
- * There might also be column-level privilege specifications, which are
- * represented in col_privs (this is a list of untransformed AccessPriv nodes).
- * Column privileges are only valid for objtype ACL_OBJECT_RELATION.
- */
-typedef struct
-{
-	bool		is_grant;
-	GrantObjectType objtype;
-	List	   *objects;
-	bool		all_privs;
-	AclMode		privileges;
-	List	   *col_privs;
-	List	   *grantees;
-	bool		grant_option;
-	DropBehavior behavior;
-} InternalGrant;
 
 /*
  * Internal format used by ALTER DEFAULT PRIVILEGES.
@@ -339,7 +315,7 @@ restrict_and_check_grant(bool is_grant, AclMode avail_goptions, bool all_privs,
 	 */
 	this_privileges = privileges & ACL_OPTION_TO_PRIVS(avail_goptions);
 	
-	 /*
+	/*
 	 * GPDB: don't do this if we're an execute node. Let the QD handle the
 	 * WARNING.
 	 */
@@ -418,8 +394,6 @@ ExecuteGrantStmt(GrantStmt *stmt)
 	ListCell   *cell;
 	const char *errormsg;
 	AclMode		all_privileges;
-	List	   *objs = NIL;
-	bool		added_objs = false;
 
 	/*
 	 * Turn the regular GrantStmt into the InternalGrant form.
@@ -449,86 +423,27 @@ ExecuteGrantStmt(GrantStmt *stmt)
 	istmt.grant_option = stmt->grant_option;
 	istmt.behavior = stmt->behavior;
 
-	/* If this is a GRANT/REVOKE on a table, expand partition references */
-	if (istmt.objtype == ACL_OBJECT_RELATION)
-	{
-		foreach(cell, istmt.objects)
-		{
-			Oid relid = lfirst_oid(cell);
-			Relation rel = heap_open(relid, AccessShareLock);
-			bool add_self = true;
-
-			if (Gp_role == GP_ROLE_DISPATCH)
-			{
-				List *a;
-				if (rel_is_partitioned(relid))
-				{
-					PartitionNode *pn = RelationBuildPartitionDesc(rel, false);
-
-					a = all_partition_relids(pn);
-					if (a)
-						added_objs = true;
-
-					objs = list_concat(objs, a);
-				}
-				else if (rel_is_child_partition(relid))
-				{
-					/* get my children */
-					a = find_all_inheritors(relid, NoLock, NULL);
-					if (a)
-						added_objs = true;
-
-					objs = list_concat(objs, a);
-
-					/* find_all_inheritors() adds me, don't do it twice */
-					add_self = false;
-				}
-			}
-
-			heap_close(rel, NoLock);
-
-			if (add_self)
-				objs = lappend_oid(objs, relid);
-		}
-		istmt.objects = objs;
-	}
-
-	/* If we're dispatching, put the objects back in into the parse tree */
-	if (Gp_role == GP_ROLE_DISPATCH && added_objs)
-	{
-		List *n = NIL;
-
-		foreach(cell, istmt.objects)
-		{
-			Oid rid = lfirst_oid(cell);
-			RangeVar *rv;
-			char *nspname = get_namespace_name(get_rel_namespace(rid));
-			char *relname = get_rel_name(rid);
-
-			rv = makeRangeVar(nspname, relname, -1);
-			n = lappend(n, rv);
-		}
-
-		stmt->objects = n;
-	}
 
 	/*
-	 * Convert the PrivGrantee list into an Oid list.  Note that at this point
-	 * we insert an ACL_ID_PUBLIC into the list if an empty role name is
-	 * detected (which is what the grammar uses if PUBLIC is found), so
-	 * downstream there shouldn't be any additional work needed to support
-	 * this case.
+	 * Convert the RoleSpec list into an Oid list.  Note that at this point we
+	 * insert an ACL_ID_PUBLIC into the list if appropriate, so downstream
+	 * there shouldn't be any additional work needed to support this case.
 	 */
 	foreach(cell, stmt->grantees)
 	{
-		PrivGrantee *grantee = (PrivGrantee *) lfirst(cell);
+		RoleSpec   *grantee = (RoleSpec *) lfirst(cell);
+		Oid			grantee_uid;
 
-		if (grantee->rolname == NULL)
-			istmt.grantees = lappend_oid(istmt.grantees, ACL_ID_PUBLIC);
-		else
-			istmt.grantees =
-				lappend_oid(istmt.grantees,
-							get_role_oid(grantee->rolname, false));
+		switch (grantee->roletype)
+		{
+			case ROLESPEC_PUBLIC:
+				grantee_uid = ACL_ID_PUBLIC;
+				break;
+			default:
+				grantee_uid = get_rolespec_oid((Node *) grantee, false);
+				break;
+		}
+		istmt.grantees = lappend_oid(istmt.grantees, grantee_uid);
 	}
 
 	/*
@@ -682,6 +597,30 @@ ExecuteGrantStmt(GrantStmt *stmt)
 
 	if (Gp_role == GP_ROLE_DISPATCH)
 	{
+		/*
+		 * GPDB: It is possible that objectNamesToOids has expanded references to
+		 * partitioned relations. It is needed to recostruct the GrantStmt objects
+		 * to include those references. We do it uncoditionally of partitioned
+		 * references now for Object Targets.
+		 */
+		if (stmt->targtype == ACL_TARGET_OBJECT &&
+				stmt->objtype == ACL_OBJECT_RELATION)
+		{
+			List *n = NIL;
+			foreach(cell, istmt.objects)
+			{
+				Oid rid = lfirst_oid(cell);
+				RangeVar *rv;
+				char *nspname = get_namespace_name(get_rel_namespace(rid));
+				char *relname = get_rel_name(rid);
+
+				rv = makeRangeVar(nspname, relname, -1);
+				n = lappend(n, rv);
+			}
+
+			stmt->objects = n;
+		}
+
 		CdbDispatchUtilityStatement((Node *) stmt,
 									DF_CANCEL_ON_ERROR|
 									DF_WITH_SNAPSHOT|
@@ -740,6 +679,15 @@ ExecGrantStmt_oids(InternalGrant *istmt)
 			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
 				 (int) istmt->objtype);
 	}
+
+	/*
+	 * Pass the info to event triggers about the just-executed GRANT.  Note
+	 * that we prefer to do it after actually executing it, because that gives
+	 * the functions a chance to adjust the istmt with privileges actually
+	 * granted.
+	 */
+	if (EventTriggerSupportsGrantObjectType(istmt->objtype))
+		EventTriggerCollectGrant(istmt);
 }
 
 /*
@@ -887,6 +835,41 @@ objectNamesToOids(GrantObjectType objtype, List *objnames)
 				 (int) objtype);
 	}
 
+	/*
+	 * GPDB: If we are the DISPATCH node and the object is a partitioned
+	 * relation, then we need to populate the partition references because the
+	 * information is not present in the cataloge tables on the segment nodes.
+	 */
+	if (Gp_role == GP_ROLE_DISPATCH && objtype == ACL_OBJECT_RELATION)
+	{
+		List *expanded = NIL;
+
+		foreach(cell, objects)
+		{
+			Oid relOid = lfirst_oid(cell);
+			List *partOids;
+
+			if (rel_is_partitioned(relOid))
+			{
+				PartitionNode *pn = RelationBuildPartitionDescByOid(relOid, false);
+				partOids = all_partition_relids(pn);
+
+				expanded = list_concat(expanded, partOids);
+				expanded = lappend_oid(expanded, relOid);
+			}
+			else if (rel_is_child_partition(relOid))
+			{
+				partOids = find_all_inheritors(relOid, NoLock, NULL);
+
+				/* partOids contains relOid so concat is enough */
+				expanded = list_concat(expanded, partOids);
+			}
+		}
+
+		if (expanded != NIL)
+			objects = expanded;
+	}
+
 	return objects;
 }
 
@@ -1008,9 +991,9 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 	GrantStmt  *action = stmt->action;
 	InternalDefaultACL iacls;
 	ListCell   *cell;
-	List	   *rolenames = NIL;
+	List	   *rolespecs = NIL;
 	List	   *nspnames = NIL;
-	DefElem    *drolenames = NULL;
+	DefElem    *drolespecs = NULL;
 	DefElem    *dnspnames = NULL;
 	AclMode		all_privileges;
 	const char *errormsg;
@@ -1030,11 +1013,11 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 		}
 		else if (strcmp(defel->defname, "roles") == 0)
 		{
-			if (drolenames)
+			if (drolespecs)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("conflicting or redundant options")));
-			drolenames = defel;
+			drolespecs = defel;
 		}
 		else
 			elog(ERROR, "option \"%s\" not recognized", defel->defname);
@@ -1042,8 +1025,8 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 
 	if (dnspnames)
 		nspnames = (List *) dnspnames->arg;
-	if (drolenames)
-		rolenames = (List *) drolenames->arg;
+	if (drolespecs)
+		rolespecs = (List *) drolespecs->arg;
 
 	/* Prepare the InternalDefaultACL representation of the statement */
 	/* roleid to be filled below */
@@ -1057,22 +1040,25 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 	iacls.behavior = action->behavior;
 
 	/*
-	 * Convert the PrivGrantee list into an Oid list.  Note that at this point
-	 * we insert an ACL_ID_PUBLIC into the list if an empty role name is
-	 * detected (which is what the grammar uses if PUBLIC is found), so
-	 * downstream there shouldn't be any additional work needed to support
-	 * this case.
+	 * Convert the RoleSpec list into an Oid list.  Note that at this point we
+	 * insert an ACL_ID_PUBLIC into the list if appropriate, so downstream
+	 * there shouldn't be any additional work needed to support this case.
 	 */
 	foreach(cell, action->grantees)
 	{
-		PrivGrantee *grantee = (PrivGrantee *) lfirst(cell);
+		RoleSpec   *grantee = (RoleSpec *) lfirst(cell);
+		Oid			grantee_uid;
 
-		if (grantee->rolname == NULL)
-			iacls.grantees = lappend_oid(iacls.grantees, ACL_ID_PUBLIC);
-		else
-			iacls.grantees =
-				lappend_oid(iacls.grantees,
-							get_role_oid(grantee->rolname, false));
+		switch (grantee->roletype)
+		{
+			case ROLESPEC_PUBLIC:
+				grantee_uid = ACL_ID_PUBLIC;
+				break;
+			default:
+				grantee_uid = get_rolespec_oid((Node *) grantee, false);
+				break;
+		}
+		iacls.grantees = lappend_oid(iacls.grantees, grantee_uid);
 	}
 
 	/*
@@ -1143,7 +1129,7 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 		}
 	}
 
-	if (rolenames == NIL)
+	if (rolespecs == NIL)
 	{
 		/* Set permissions for myself */
 		iacls.roleid = GetUserId();
@@ -1155,11 +1141,11 @@ ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt)
 		/* Look up the role OIDs and do permissions checks */
 		ListCell   *rolecell;
 
-		foreach(rolecell, rolenames)
+		foreach(rolecell, rolespecs)
 		{
-			char	   *rolename = strVal(lfirst(rolecell));
+			RoleSpec   *rolespec = lfirst(rolecell);
 
-			iacls.roleid = get_role_oid(rolename, false);
+			iacls.roleid = get_rolespec_oid((Node *) rolespec, false);
 
 			/*
 			 * We insist that calling user be a member of each target role. If
@@ -3970,26 +3956,6 @@ aclcheck_error_type(AclResult aclerr, Oid typeOid)
 }
 
 
-/* Check if given user has rolcatupdate privilege according to pg_authid */
-static bool
-has_rolcatupdate(Oid roleid)
-{
-	bool		rolcatupdate;
-	HeapTuple	tuple;
-
-	tuple = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("role with OID %u does not exist", roleid)));
-
-	rolcatupdate = ((Form_pg_authid) GETSTRUCT(tuple))->rolcatupdate;
-
-	ReleaseSysCache(tuple);
-
-	return rolcatupdate;
-}
-
 /*
  * Relay for the various pg_*_mask routines depending on object kind
  */
@@ -4169,8 +4135,7 @@ pg_class_aclmask(Oid table_oid, Oid roleid,
 
 	/*
 	 * Deny anyone permission to update a system catalog unless
-	 * pg_authid.rolcatupdate is set.  (This is to let superusers protect
-	 * themselves from themselves.)  Also allow it if allowSystemTableMods.
+	 * pg_authid.rolsuper is set.  Also allow it if allowSystemTableMods.
 	 *
 	 * As of 7.4 we have some updatable system views; those shouldn't be
 	 * protected in this way.  Assume the view rules can take care of
@@ -4179,7 +4144,7 @@ pg_class_aclmask(Oid table_oid, Oid roleid,
 	if ((mask & (ACL_INSERT | ACL_UPDATE | ACL_DELETE | ACL_TRUNCATE | ACL_USAGE)) &&
 		IsSystemClass(table_oid, classForm) &&
 		classForm->relkind != RELKIND_VIEW &&
-		!has_rolcatupdate(roleid) &&
+		!superuser_arg(roleid) &&
 		!allowSystemTableMods)
 	{
 #ifdef ACLDEBUG
@@ -5764,6 +5729,25 @@ has_createrole_privilege(Oid roleid)
 	if (HeapTupleIsValid(utup))
 	{
 		result = ((Form_pg_authid) GETSTRUCT(utup))->rolcreaterole;
+		ReleaseSysCache(utup);
+	}
+	return result;
+}
+
+bool
+has_bypassrls_privilege(Oid roleid)
+{
+	bool		result = false;
+	HeapTuple	utup;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	utup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
+	if (HeapTupleIsValid(utup))
+	{
+		result = ((Form_pg_authid) GETSTRUCT(utup))->rolbypassrls;
 		ReleaseSysCache(utup);
 	}
 	return result;

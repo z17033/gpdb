@@ -106,6 +106,11 @@ int			gp_reject_percent_threshold;	/* SREH reject % kicks off only
 bool		gp_select_invisible = false;	/* debug mode to allow select to
 											 * see "invisible" rows */
 
+int         gp_segment_connect_timeout = 180;  /* Maximum time (in seconds) allowed 
+												* for a new worker process to start
+												* or a mirror to respond.
+												*/
+
 /*
  * Configurable timeout for snapshot add: exceptionally busy systems may take
  * longer than our old hard-coded version -- so here is a tuneable version.
@@ -238,7 +243,6 @@ int			gp_hashagg_groups_per_bucket = 5;
 int			gp_motion_slice_noop = 0;
 
 /* Greenplum Database Experimental Feature GUCs */
-int			gp_distinct_grouping_sets_threshold = 32;
 bool		gp_enable_explain_allstat = FALSE;
 bool		gp_enable_motion_deadlock_sanity = FALSE;	/* planning time sanity
 														 * check */
@@ -614,42 +618,6 @@ int gp_log_fts;
  * written with a severity level of LOG.
  */
 int gp_log_interconnect;
-
-/*
- * gp_enable_gpperfmon and gp_gpperfmon_send_interval are GUCs that we'd like
- * to have propagate from master to segments but we don't want non-super users
- * to be able to set it.  Unfortunately, as long as we use libpq to connect to
- * the segments its hard to create a clean way of doing this.
- *
- * Here we check and enforce that if the value is being set on the master its being
- * done as superuser and not a regular user.
- *
- */
-bool
-gpvars_check_gp_enable_gpperfmon(bool *newval, void **extra, GucSource source)
-{
-	if (Gp_role == GP_ROLE_DISPATCH && IsUnderPostmaster && GetCurrentRoleId() != InvalidOid && !superuser())
-	{
-		GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
-		GUC_check_errmsg("must be superuser to set gp_enable_gpperfmon");
-		return false;
-	}
-
-	return true;
-}
-
-bool
-gpvars_check_gp_gpperfmon_send_interval(int *newval, void **extra, GucSource source)
-{
-	if (Gp_role == GP_ROLE_DISPATCH && IsUnderPostmaster && GetCurrentRoleId() != InvalidOid && !superuser())
-	{
-		GUC_check_errcode(ERRCODE_INSUFFICIENT_PRIVILEGE);
-		GUC_check_errmsg("must be superuser to set gp_gpperfmon_send_interval");
-		return false;
-	}
-
-	return true;
-}
 
 /*
  * gpvars_check_gp_resource_manager_policy
