@@ -2826,7 +2826,7 @@ typedef struct SecLabelStmt
 #define CURSOR_OPT_GENERIC_PLAN 0x0040	/* force use of generic plan */
 #define CURSOR_OPT_CUSTOM_PLAN	0x0080	/* force use of custom plan */
 
-#define CURSOR_OPT_PARALLEL		0x0100	/* Cursor for parallel retrieving */
+#define CURSOR_OPT_PARALLEL_RETRIEVE		0x0100	/* Cursor for parallel retrieving */
 
 /*
  * This is used to request the planner to create a plan that's updatable with
@@ -2876,8 +2876,6 @@ typedef struct FetchStmt
 	int64		howMany;		/* number of rows, or position argument */
 	char	   *portalname;		/* name of portal (cursor) */
 	bool		ismove;			/* TRUE if MOVE */
-	bool        isParallelCursor;  /* If it is a parallel cursor, FETCH statement
-									  is in fact EXECUTE PARALLEL CURSOR*/
 } FetchStmt;
 
 /* ----------------------
@@ -3602,7 +3600,7 @@ typedef struct AlterTSConfigurationStmt
 typedef struct RetrieveStmt
 {
 	NodeTag		type;
-	int64		token;
+	char		*endpoint_name;
 	int64		count;
 	bool		is_all;
 } RetrieveStmt;

@@ -1078,7 +1078,7 @@ standard_ProcessUtility(Node *parsetree,
 			break;
 
 		case T_RetrieveStmt:
-			RetrieveResults((RetrieveStmt *) parsetree, dest);
+			ExecRetrieveStmt((RetrieveStmt *) parsetree, dest);
 			break;
 
 		case T_CommentStmt:
@@ -2146,17 +2146,12 @@ UtilityTupleDescriptor(Node *parsetree)
 			{
 				RetrieveStmt *n = (RetrieveStmt *) parsetree;
 
-				if (n->token <= 0)
-					elog(ERROR, "Invalid token " INT64_FORMAT, n->token);
-
 				if (Gp_role != GP_ROLE_RETRIEVE)
 					elog(ERROR, "RETRIEVE command can only run in retrieve mode");
 
-				SetGpToken(n->token);
-                SetParallelCursorExecRole(PCER_RECEIVER);
-				AttachEndpoint();
+                SetParallelCursorExecRole(PRCER_RECEIVER);
 
-				return CreateTupleDescCopy(TupleDescOfRetrieve());
+				return CreateTupleDescCopy(GetRetrieveStmtTupleDesc(n));
 			}
 
 		default:
@@ -2466,9 +2461,9 @@ CreateCommandTag(Node *parsetree)
 			{
 				DeclareCursorStmt *stmt = (DeclareCursorStmt *) parsetree;
 
-				if ((stmt->options & CURSOR_OPT_PARALLEL) != 0)
+				if ((stmt->options & CURSOR_OPT_PARALLEL_RETRIEVE) != 0)
 				{
-					tag = "DECLARE PARALLEL CURSOR";
+					tag = "DECLARE PARALLEL RETRIEVE CURSOR";
 				}
 				else
 				{
@@ -2492,10 +2487,7 @@ CreateCommandTag(Node *parsetree)
 			{
 				FetchStmt  *stmt = (FetchStmt *) parsetree;
 
-				if (stmt->isParallelCursor)
-					tag = "EXECUTE PARALLEL CURSOR";
-				else
-					tag = (stmt->ismove) ? "MOVE" : "FETCH";
+				tag = (stmt->ismove) ? "MOVE" : "FETCH";
 			}
 			break;
 

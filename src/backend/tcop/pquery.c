@@ -28,8 +28,6 @@
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
-#include "cdb/cdbdisp_query.h"
-#include "cdb/cdbendpoint.h"
 #include "cdb/ml_ipc.h"
 #include "commands/createas.h"
 #include "commands/queue.h"
@@ -111,7 +109,7 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 	qd->totaltime = NULL;
 
 	qd->extended_query = false; /* default value */
-	qd->parallel_cursor = false;
+	qd->parallel_retrieve_cursor = false;
 	qd->portal_name = NULL;
 
 	qd->ddesc = NULL;
@@ -159,7 +157,7 @@ CreateUtilityQueryDesc(Node *utilitystmt,
 	qd->totaltime = NULL;
 
 	qd->extended_query = false; /* default value */
-	qd->parallel_cursor = false;
+	qd->parallel_retrieve_cursor = false;
 	qd->portal_name = NULL;
 
 	return qd;
@@ -235,8 +233,8 @@ ProcessQuery(Portal portal,
 									GP_INSTRUMENT_OPTS);
 	queryDesc->ddesc = portal->ddesc;
 
-	if (portal->cursorOptions & CURSOR_OPT_PARALLEL)
-		queryDesc->parallel_cursor = true;
+	if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+		queryDesc->parallel_retrieve_cursor = true;
 
 	if (gp_enable_gpperfmon && Gp_role == GP_ROLE_DISPATCH)
 	{
@@ -423,8 +421,6 @@ ChoosePortalStrategy(List *stmts, bool parallelCursor)
 				{
 					if (pstmt->hasModifyingCTE)
 						return PORTAL_ONE_MOD_WITH;
-					else if (parallelCursor)
-						return PORTAL_MULTI_QUERY;
 					else
 						return PORTAL_ONE_SELECT;
 				}
@@ -637,7 +633,7 @@ PortalStart(Portal portal, ParamListInfo params,
 		/*
 		 * Determine the portal execution strategy
 		 */
-		portal->strategy = ChoosePortalStrategy(portal->stmts, (portal->cursorOptions & CURSOR_OPT_PARALLEL) > 0);
+		portal->strategy = ChoosePortalStrategy(portal->stmts, (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) > 0);
 
 		/* Initialize the backoff entry for this backend */
 		PortalBackoffEntryInit(portal);
@@ -694,8 +690,13 @@ PortalStart(Portal portal, ParamListInfo params,
 					queryDesc->portal_name = (portal->name ? pstrdup(portal->name) : (char *) NULL);
 				}
 
-				if (portal->cursorOptions & CURSOR_OPT_PARALLEL)
-					queryDesc->parallel_cursor = true;
+				if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+				{
+					if (queryDesc->ddesc == NULL)
+						queryDesc->ddesc = makeNode(QueryDispatchDesc);
+					queryDesc->parallel_retrieve_cursor = true;
+					queryDesc->ddesc->parallelCursorName = queryDesc->portal_name;
+				}
 
 				queryDesc->plannedstmt->query_mem = ResourceManagerGetQueryMemoryLimit(queryDesc->plannedstmt);
 
@@ -987,9 +988,6 @@ PortalRun(Portal portal, int64 count, bool isTopLevel,
 			case PORTAL_ONE_RETURNING:
 			case PORTAL_ONE_MOD_WITH:
 			case PORTAL_UTIL_SELECT:
-
-				if (portal->is_parallel)
-					break;
 
 				/*
 				 * If we have not yet run the command, do so, storing its
@@ -1625,7 +1623,6 @@ PortalRunFetch(Portal portal,
 		switch (portal->strategy)
 		{
 			case PORTAL_ONE_SELECT:
-			case PORTAL_MULTI_QUERY:
 				result = DoPortalRunFetch(portal, fdirection, count, dest);
 				break;
 
@@ -1702,8 +1699,7 @@ DoPortalRunFetch(Portal portal,
 	Assert(portal->strategy == PORTAL_ONE_SELECT ||
 		   portal->strategy == PORTAL_ONE_RETURNING ||
 		   portal->strategy == PORTAL_ONE_MOD_WITH ||
-		   portal->strategy == PORTAL_UTIL_SELECT ||
-		   portal->strategy == PORTAL_MULTI_QUERY);
+		   portal->strategy == PORTAL_UTIL_SELECT);
 
 	switch (fdirection)
 	{
@@ -1904,48 +1900,7 @@ DoPortalRunFetch(Portal portal,
 		return result;
 	}
 
-	/*
-	 * Fetch/Retrieve from parallel cursor uses PORTAL_MULTI_QUERY strategy,
-	 * because results are retrieved from QEs instead of QD.
-	 */
-	if (portal->strategy == PORTAL_MULTI_QUERY)
-	{
-        SetGpToken(portal->parallel_cursor_token);
-		PortalRunMulti(portal, false, dest, dest, NULL);
-
-		if (portal->parallel_cursor_token != InvalidToken)
-		{
-			char		cmd[255];
-
-			/* Unset sender pid for end-point */
-			sprintf(cmd, "set gp_endpoints_token_operation='u" INT64_FORMAT "'", portal->parallel_cursor_token);
-
-			List* l = GetContentIDsByToken(portal->parallel_cursor_token);
-			if (l)
-			{
-				if (l->length == 1 && list_nth_int(l, 0) == MASTER_CONTENT_ID)
-				{
-					/* unset sender pid for end-point on master */
-					UnsetSenderPidOfToken(portal->parallel_cursor_token);
-				}
-				else
-				{
-					/* dispatch to some segments */
-					CdbDispatchCommandToSegments(cmd, DF_CANCEL_ON_ERROR, l, NULL);
-				}
-			}
-			else
-			{
-				/* dispatch to all segments */
-				CdbDispatchCommand(cmd, DF_CANCEL_ON_ERROR, NULL);
-			}
-		}
-        ClearGpToken();
-		MarkPortalDone(portal);
-		return 0;
-	}
-	else
-		return PortalRunSelect(portal, forward, count, dest);
+	return PortalRunSelect(portal, forward, count, dest);
 }
 
 /*

@@ -4010,7 +4010,18 @@ _copyFetchStmt(const FetchStmt *from)
 	COPY_SCALAR_FIELD(howMany);
 	COPY_STRING_FIELD(portalname);
 	COPY_SCALAR_FIELD(ismove);
-	COPY_SCALAR_FIELD(isParallelCursor);
+
+	return newnode;
+}
+
+static RetrieveStmt*
+_copyRetrieveStmt(const RetrieveStmt *from)
+{
+	RetrieveStmt *newnode = makeNode(RetrieveStmt);
+
+	COPY_STRING_FIELD(endpoint_name);
+	COPY_SCALAR_FIELD(count);
+	COPY_SCALAR_FIELD(is_all);
 
 	return newnode;
 }
@@ -5860,6 +5871,9 @@ copyObject(const void *from)
 			break;
 		case T_FetchStmt:
 			retval = _copyFetchStmt(from);
+			break;
+		case T_RetrieveStmt:
+			retval = _copyRetrieveStmt(from);
 			break;
 		case T_IndexStmt:
 			retval = _copyIndexStmt(from);

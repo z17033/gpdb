@@ -323,38 +323,33 @@ auth_failed(Port *port, int status, char *logdetail)
 }
 
 /*
- * Retrieve role directly uses the token of parallel cursor as password to authenticate.
+ * Retrieve role directly uses the token of PARALLEL RETRIEVE CURSOR as password to authenticate.
  */
-static int
+static void
 retrieve_role_authentication(Port *port)
 {
 	char	   *passwd;
 	Oid        owner_uid;
+	const char *msg = "Retrieve auth token is invalid";
 
 	sendAuthRequest(port, AUTH_REQ_PASSWORD);
 	passwd = recv_password_packet(port);
 	if (passwd == NULL)
 	{
-		elog(LOG, "libpq connection skips RETRIEVE role authentication"
-			 "because of empty password");
-		return false;
+		ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD), errmsg("%s", msg)));
 	}
 
 	/*
-	 * verify that the username is same as the owner of parallel cursor and the
+	 * verify that the username is same as the owner of PARALLEL RETRIEVE CURSOR and the
 	 * password is the token
 	 */
 	owner_uid = get_role_oid(port->user_name, false);
-	if (!FindEndpointTokenByUser(owner_uid, passwd))
+	if (!AuthEndpoint(owner_uid, passwd))
 	{
-		elog(LOG, "libpq connection skips RETRIEVE role authentication"
-			 "because the password doesn't match any token of the parallel"
-			 "cursor created by current user \"%s\"", port->user_name);
-		return false;
+		ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD), errmsg("%s", msg)));
 	}
 
 	FakeClientAuthentication(port);
-	return true;
 }
 
 /*
@@ -472,8 +467,10 @@ ClientAuthentication(Port *port)
 	elog(LOG, "libpq connection authenticate in Gp_role: %s, Gp_session_role: "
 		 "%s", role_to_string(Gp_role), role_to_string(Gp_session_role));
 
-	if (Gp_role == GP_ROLE_RETRIEVE && retrieve_role_authentication(port))
+	if (Gp_role == GP_ROLE_RETRIEVE) {
+		retrieve_role_authentication(port);
 		return;
+	}
 
 	/*
 	 * If this is a QD to QE connection, we might be able to short circuit

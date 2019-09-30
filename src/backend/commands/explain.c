@@ -18,6 +18,7 @@
 #include "access/xact.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "cdb/cdbendpoint.h"
 #include "commands/createas.h"
 #include "commands/defrem.h"
 #include "commands/prepare.h"
@@ -635,44 +636,43 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	if (queryDesc->utilitystmt && IsA(queryDesc->utilitystmt, DeclareCursorStmt))
 		cursorOptions |= ((DeclareCursorStmt *) queryDesc->utilitystmt)->options;
 
-	if (cursorOptions & CURSOR_OPT_PARALLEL)
+	if (cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
 	{
-		char endpoint_info[1024];
+		StringInfoData            endpointInfoStr;
+		enum EndPointExecPosition endPointExecPosition;
+		List *cids;
 
+		initStringInfo(&endpointInfoStr);
+		cids = ChooseEndpointContentIDForParallelCursor(
+			queryDesc->plannedstmt->planTree, &endPointExecPosition);
 		ExplainOpenGroup("Cursor", "Cursor", true, es);
-
-		if (!(queryDesc->plannedstmt->planTree->flow->flotype == FLOW_SINGLETON &&
-			queryDesc->plannedstmt->planTree->flow->locustype != CdbLocusType_SegmentGeneral))
-		{
-			if (queryDesc->plannedstmt->planTree->directDispatch.isDirectDispatch &&
-				queryDesc->plannedstmt->planTree->directDispatch.contentIds != NULL)
-			{
-				/*
-				 * Direct dispatch to some segments, so end-points only exist
-				 * on these segments
-				 */
-				ListCell *cell;
+		switch(endPointExecPosition) {
+			case ENDPOINT_ON_Entry_DB: {
+				appendStringInfo(&endpointInfoStr, "\"on master\"");
+				break;
+			}
+			case ENDPOINT_ON_SINGLE_QE:
+			case ENDPOINT_ON_SOME_QE: {
+				ListCell * cell;
 				bool isFirst = true;
-				size_t len = 0;
-				len += snprintf(endpoint_info+len, sizeof(endpoint_info)-len, "on segments: contentid [");
-				foreach(cell, queryDesc->plannedstmt->planTree->directDispatch.contentIds)
+				appendStringInfo(&endpointInfoStr, "on segments: contentid [");
+				foreach(cell, cids)
 				{
-					len += snprintf(endpoint_info+len, sizeof(endpoint_info)-len, (isFirst)?"%d":", %d", lfirst_int(cell));
+					appendStringInfo(&endpointInfoStr, (isFirst)?"%d":", %d", lfirst_int(cell));
 					isFirst = false;
 				}
-				len += snprintf(endpoint_info+len, sizeof(endpoint_info)-len, "]");
-
-			}else{
-				snprintf(endpoint_info, sizeof(endpoint_info), "on all %d segments", getgpsegmentCount());
+				appendStringInfo(&endpointInfoStr, "]");
+				break;
 			}
-			ExplainProperty("Endpoint", endpoint_info, false, es);
+			case ENDPOINT_ON_ALL_QE:
+			default: {
+				appendStringInfo(&endpointInfoStr, "on all %d segments", getgpsegmentCount());
+				break;
+			}
 		}
-		else
-		{
-			ExplainProperty("Endpoint", "on master", false, es);
-		}
-
-		ExplainOpenGroup("Cursor", "Cursor", true, es);
+		ExplainProperty("Endpoint", endpointInfoStr.data, false, es);
+		list_free(cids);
+		ExplainCloseGroup("Cursor", "Cursor", true, es);
 	}
 
 	/* Print info about runtime of triggers */
@@ -703,7 +703,7 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	 * as optimizer settings etc.
      */
 	ExplainOpenGroup("Settings", "Settings", true, es);
-
+	
 	if (queryDesc->plannedstmt->planGen == PLANGEN_PLANNER)
 		ExplainProperty("Optimizer", "Postgres query optimizer", false, es);
 #ifdef USE_ORCA

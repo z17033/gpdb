@@ -1,124 +1,116 @@
-/*
+/*-------------------------------------------------------------------------
  * cdbendpoint.h
+ *	  Functions supporting the Greenplum Endpoint PARALLEL RETRIEVE CURSOR.
  *
- * Copyright (c) 2018-Present Pivotal Software, Inc.
+ * The PARALLEL RETRIEVE CURSOR is introduced to reduce the heavy burdens of
+ * master node. If possible it will not gather the result to master, and
+ * redirect the result to segments. However some query may still need to
+ * gather to the master. So the ENDPOINT is introduced to present these
+ * node entities that when the PARALLEL RETRIEVE CURSOR executed, the query result
+ * will be redirected to, not matter they are one master or some segments
+ * or all segments.
+ *
+ * When the PARALLEL RETRIEVE CURSOR executed, user can setup retrieve mode connection
+ * (in retrieve mode connection, the libpq authentication will not depends on
+ * pg_hba) to all endpoints for retrieving result data parallelly. The RETRIEVE
+ * statement behavior is similar to the "FETCH count" statement, while it only
+ * can be executed in retrieve mode connection to endpoint.
+ *
+ * #NOTE: Orca is not support PARALLEL RETRIEVE CURSOR for now. It should fall back
+ * to postgres optimizer.
+ *
+ * Copyright (c) 2019-Present Pivotal Software, Inc
+ *
+ *
+ * IDENTIFICATION
+ *		src/include/cdb/cdbendpoint.h
+ *
+ *-------------------------------------------------------------------------
  */
-
 #ifndef CDBENDPOINT_H
 #define CDBENDPOINT_H
 
 #include <inttypes.h>
 
-#include "cdb/cdbutil.h"
-#include "nodes/parsenodes.h"
-#include "storage/latch.h"
-#include "tcop/dest.h"
+#include "executor/tqueue.h"
+#include "executor/execdesc.h"
 #include "storage/dsm.h"
-#include "storage/shm_mq.h"
-
-#define InvalidToken        (-1)
-#define InvalidSession      (-1)
-
-#define GP_ENDPOINT_STATUS_INIT		  "INIT"
-#define GP_ENDPOINT_STATUS_READY	  "READY"
-#define GP_ENDPOINT_STATUS_RETRIEVING "RETRIEVING"
-#define GP_ENDPOINT_STATUS_FINISH	  "FINISH"
-#define GP_ENDPOINT_STATUS_RELEASED   "RELEASED"
+#include "storage/shm_toc.h"
+#include "nodes/parsenodes.h"
+#include "tcop/dest.h"
+#include "storage/lwlock.h"
 
 /*
- * Roles that used in parallel cursor execution.
+ * Roles that used in PARALLEL RETRIEVE CURSOR execution.
  *
  * EPR_SENDER(endpoint) behaviors like a store, the client could retrieve
  * results from it. The EPR_SENDER could be on master or some/all segments,
- * depending on the query of the parallel cursor.
+ * depending on the query of the PARALLEL RETRIEVE CURSOR.
  *
  * EPR_RECEIVER(retrieve role), connect to each EPR_SENDER(endpoint) via "retrieve"
  * mode to retrieve results.
  */
-enum ParallelCursorExecRole
+enum ParallelRetrCursorExecRole
 {
-	PCER_SENDER = 1,
-	PCER_RECEIVER,
-	PCER_NONE
+	PRCER_SENDER = 1,
+	PRCER_RECEIVER,
+	PRCER_NONE
 };
 
 /*
- * Endpoint attach status.
+ * Endpoint allocate positions.
  */
-typedef enum AttachStatus
+enum EndPointExecPosition
 {
-	Status_NotAttached = 0,
-	Status_Prepared,
-	Status_Attached,
-	Status_Finished
-}	AttachStatus;
-
-/*
- * Retrieve role status.
- */
-enum RetrieveStatus
-{
-    RETRIEVE_STATUS_INVALID,
-    RETRIEVE_STATUS_INIT,
-    RETRIEVE_STATUS_GET_TUPLEDSCR,
-    RETRIEVE_STATUS_GET_DATA,
-    RETRIEVE_STATUS_FINISH,
+	ENDPOINT_POS_INVALID,
+	ENDPOINT_ON_Entry_DB,
+	ENDPOINT_ON_SINGLE_QE,
+	ENDPOINT_ON_SOME_QE,
+	ENDPOINT_ON_ALL_QE
 };
 
-/* Endpoint shared memory context init and dsm create/attach */
-extern Size Endpoint_ShmemSize(void);
-extern void Endpoint_CTX_ShmemInit(void);
-extern void AttachOrCreateEndpointAndTokenDSM(void);
-extern bool AttachOrCreateEndpointDsm(bool attachOnly);
-extern bool AttachOrCreateTokenDsm(bool attachOnly);
+/* cbdendpoint.c */
+/* Endpoint shared memory context init */
+extern Size EndpointShmemSize(void);
+extern void EndpointCTXShmemInit(void);
 
-/* Declare parallel cursor stage */
-extern int64 GetUniqueGpToken(void);
-extern void AddParallelCursorToken(int64 token, const char *name, int session_id,
-                                   Oid user_id, bool all_seg, List *seg_list);
+/*
+ * Below functions should run on dispatcher.
+ */
+extern enum EndPointExecPosition GetParallelCursorEndpointPosition(
+								  const struct Plan *planTree);
+extern List *ChooseEndpointContentIDForParallelCursor(
+		  const struct Plan *planTree, enum EndPointExecPosition *position);
+extern void WaitEndpointReady(const struct Plan *planTree, const char *cursorName);
 
-/* Execute parallel cursor stage, start sender job */
-extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc);
+/*
+ * Below functions should run on Endpoints(QE/Entry DB).
+ */
+extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName);
 extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest);
 
-/* Execute parallel cursor finish stage, unset sender pid and exit retrieve if needed */
-extern void UnsetSenderPidOfToken(int64 token);
-
-/* Remove parallel cursor during cursor portal drop/abort */
-extern void RemoveParallelCursorToken(int64 token);
-
-/* Endpoint backend register/free, execute on endpoints(QE or QD) */
-extern void AllocEndpointOfToken(int64 token);
-extern void FreeEndpointOfToken(int64 token);
-
-// "gp_endpoints_token_operation" GUC hook.
-extern void assign_gp_endpoints_token_operation(const char *newval, void *extra);
-
-/* Retrieve role auth */
-extern bool FindEndpointTokenByUser(Oid user_id, const char *token_str);
-
-/* For retrieve role. Must have endpoint allocated */
-extern void AttachEndpoint(void);
-extern TupleDesc TupleDescOfRetrieve(void);
-extern void RetrieveResults(RetrieveStmt * stmt, DestReceiver *dest);
-extern void DetachEndpoint(bool reset_pid);
+/* UDFs for endpoints internal operation */
+extern Datum gp_operate_endpoints_token(PG_FUNCTION_ARGS);
+extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
+extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 
 
-/* Utilities */
-extern int64 GpToken(void);
-extern void SetGpToken(int64 token);
-extern void ClearGpToken(void);
-extern int64 parseToken(char *token);
-extern char* printToken(int64 token_id); /* Need to pfree() the result */
+/* cdbendpointretrieve.c */
+/*
+ * Below functions should run on retrieve role backend.
+ */
+extern bool AuthEndpoint(Oid userID, const char *tokenStr);
+extern TupleDesc GetRetrieveStmtTupleDesc(const RetrieveStmt *stmt);
+extern void ExecRetrieveStmt(const RetrieveStmt *stmt, DestReceiver *dest);
 
-extern void SetParallelCursorExecRole(enum ParallelCursorExecRole role);
+
+/* cdbendpointutils.c */
+/* Utility functions */
+extern void SetParallelCursorExecRole(enum ParallelRetrCursorExecRole role);
 extern void ClearParallelCursorExecRole(void);
-extern enum ParallelCursorExecRole GetParallelCursorExecRole(void);
+extern enum ParallelRetrCursorExecRole GetParallelCursorExecRole(void);
 
-extern List *GetContentIDsByToken(int64 token);
-
-
-/* UDFs for endpoint */
+/* UDFs for endpoints info*/
 extern Datum gp_endpoints_info(PG_FUNCTION_ARGS);
 extern Datum gp_endpoints_status_info(PG_FUNCTION_ARGS);
 

@@ -6,6 +6,7 @@
 /pg_basebackup.sql
 /pg_basebackup_with_tablespaces.sql
 /pt_io_in_progress_deadlock.sql
+/parallel_retrieve_cursor/*
 
 # ignores including sub-directories
 disable_resgroup.sql

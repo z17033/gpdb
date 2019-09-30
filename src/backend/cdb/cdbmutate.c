@@ -591,7 +591,7 @@ apply_motion(PlannerInfo *root, Plan *plan, int cursorOptions)
 				if (plan->flow->flotype == FLOW_PARTITIONED ||
 					(plan->flow->flotype == FLOW_SINGLETON &&
 					 plan->flow->locustype == CdbLocusType_SegmentGeneral &&
-					 !(cursorOptions & CURSOR_OPT_PARALLEL)))
+					 !(cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)))
 					bringResultToDispatcher = true;
 
 				needToAssignDirectDispatchContentIds = root->config->gp_enable_direct_dispatch;
@@ -648,8 +648,8 @@ apply_motion(PlannerInfo *root, Plan *plan, int cursorOptions)
 		}
 
 		/* Use UNION RECEIVE.  Does not preserve ordering. */
-		/* PARALLEL CURSOR without sort clause has no motion between QD and QEs */
-		else if (!(cursorOptions & CURSOR_OPT_PARALLEL))
+		/* PARALLEL RETRIEVE CURSOR without sort clause has no motion between QD and QEs */
+		else if (!(cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE))
 			Insist(focusPlan(plan, false, false));
 	}
 

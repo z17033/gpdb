@@ -37,7 +37,6 @@
 #endif
 
 #include <pthread.h>
-#include <string.h>
 
 #include "access/parallel.h"
 #include "access/printtup.h"
@@ -1027,6 +1026,7 @@ exec_mpp_query(const char *query_string,
 	SliceTable *sliceTable = NULL;
 	Slice      *slice = NULL;
 	ParamListInfo paramLI = NULL;
+	bool forParallelCursor = false;
 
 	Assert(Gp_role == GP_ROLE_EXECUTE);
 	/*
@@ -1134,6 +1134,11 @@ exec_mpp_query(const char *query_string,
 
 		if (ddesc->oidAssignments)
 			AddPreassignedOids(ddesc->oidAssignments);
+
+		if (ddesc->parallelCursorName && ddesc->parallelCursorName[0])
+		{
+			forParallelCursor = true;
+		}
     }
 
 	/*
@@ -1312,8 +1317,8 @@ exec_mpp_query(const char *query_string,
 						  list_make1(plan ? (Node*)plan : (Node*)utilityStmt),
 						  NULL);
 
-		if ((commandType == CMD_SELECT) && (currentSliceId == 0) && (GpToken() != InvalidToken))
-            SetParallelCursorExecRole(PCER_SENDER);
+		if ((commandType == CMD_SELECT) && (currentSliceId == 0) && forParallelCursor)
+			SetParallelCursorExecRole(PRCER_SENDER);
 
 		/*
 		 * Start the portal.
@@ -3842,34 +3847,28 @@ ProcessInterrupts(const char* filename, int lineno)
 		 */
 		if (!DoingCommandRead)
 		{
-			char        *cancel_msg = NULL;
+			StringInfoData cancel_msg_str;
 
 			LockErrorCleanup();
+			initStringInfo(&cancel_msg_str);
 
 			if (HasCancelMessage())
 			{
-				/* cancel_msg will be ': "<msg>"' extra 4 for : ""*/
-				const int cancel_msg_len = MAX_CANCEL_MSG + 4;
 				char *buffer			 = palloc0(MAX_CANCEL_MSG);
-				cancel_msg				 = palloc0(cancel_msg_len);
 
 				GetCancelMessage(&buffer, MAX_CANCEL_MSG);
-				snprintf(cancel_msg, cancel_msg_len, ": \"%s\"", buffer);
+				appendStringInfo(&cancel_msg_str, ": \"%s\"", buffer);
 				pfree(buffer);
-			}
-			else
-			{
-				cancel_msg = "";
 			}
 
 			if (Gp_role == GP_ROLE_EXECUTE)
 				ereport(ERROR,
 						(errcode(ERRCODE_GP_OPERATION_CANCELED),
-						 errmsg("canceling MPP operation%s", cancel_msg)));
+						 errmsg("canceling MPP operation%s", cancel_msg_str.data)));
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_QUERY_CANCELED),
-						 errmsg("canceling statement due to user request%s", cancel_msg)));
+						 errmsg("canceling statement due to user request%s", cancel_msg_str.data)));
 		}
 	}
 
@@ -5142,10 +5141,6 @@ PostgresMain(int argc, char *argv[],
 					int serializedParamslen = 0;
 					int serializedQueryDispatchDesclen = 0;
 					int resgroupInfoLen = 0;
-
-					int64 token = InvalidToken;
-					int32 session_id = InvalidSession;
-
 					TimestampTz statementStart;
 					Oid suid;
 					Oid ouid;
@@ -5210,9 +5205,6 @@ PostgresMain(int argc, char *argv[],
 					if (resgroupInfoLen > 0)
 						resgroupInfoBuf = pq_getmsgbytes(&input_message, resgroupInfoLen);
 
-					token = pq_getmsgint64(&input_message);
-					session_id = pq_getmsgint(&input_message, sizeof(session_id));
-
 					pq_getmsgend(&input_message);
 
 					elog((Debug_print_full_dtm ? LOG : DEBUG5), "MPP dispatched stmt from QD: %s.",query_string);
@@ -5265,16 +5257,11 @@ PostgresMain(int argc, char *argv[],
 						}
 					}
 					else
-					{
-						if (token != InvalidToken)
-							SetGpToken(token);
-
 						exec_mpp_query(query_string,
 									   serializedQuerytree, serializedQuerytreelen,
 									   serializedPlantree, serializedPlantreelen,
 									   serializedParams, serializedParamslen,
 									   serializedQueryDispatchDesc, serializedQueryDispatchDesclen);
-					}
 
 					SetUserIdAndContext(GetOuterUserId(), false);
 

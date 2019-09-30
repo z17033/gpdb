@@ -246,7 +246,6 @@ CreatePortal(const char *name, bool allowDup, bool dupSilent)
 	portal->atEnd = true;		/* disallow fetches until query is set */
 	portal->visible = true;
 	portal->creation_time = GetCurrentStatementStartTimestamp();
-	portal->parallel_cursor_token = InvalidToken;
 
 	/* set portal id and queue id if have enabled resource scheduling */
 	if (Gp_role == GP_ROLE_DISPATCH && IsResQueueEnabled())
@@ -608,13 +607,6 @@ PortalDrop(Portal portal, bool isTopCommit)
 		tuplestore_end(portal->holdStore);
 		MemoryContextSwitchTo(oldcontext);
 		portal->holdStore = NULL;
-	}
-
-	/* Clear token if it is a parallel cursor */
-	if (portal->parallel_cursor_token != InvalidToken)
-	{
-		RemoveParallelCursorToken(portal->parallel_cursor_token);
-		portal->parallel_cursor_token = InvalidToken;
 	}
 
 	/* delete tuplestore storage, if any */
@@ -1255,8 +1247,8 @@ pg_cursor(PG_FUNCTION_ARGS)
 		values[2] = BoolGetDatum(portal->cursorOptions & CURSOR_OPT_HOLD);
 		values[3] = BoolGetDatum(portal->cursorOptions & CURSOR_OPT_BINARY);
 		values[4] = BoolGetDatum(portal->cursorOptions & CURSOR_OPT_SCROLL);
-		/* Note: CURSOR_OPT_PARALLEL is 0x0100, out of range of the bool (char) */
-		values[5] = BoolGetDatum((portal->cursorOptions & CURSOR_OPT_PARALLEL) != 0);
+		/* Note: CURSOR_OPT_PARALLEL_RETRIEVE is 0x0100, out of range of the bool (char) */
+		values[5] = BoolGetDatum((portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) != 0);
 		values[6] = TimestampTzGetDatum(portal->creation_time);
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);

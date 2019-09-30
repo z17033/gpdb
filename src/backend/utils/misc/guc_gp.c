@@ -25,7 +25,6 @@
 #include "access/xlog_internal.h"
 #include "cdb/cdbappendonlyam.h"
 #include "cdb/cdbdisp.h"
-#include "cdb/cdbendpoint.h"
 #include "cdb/cdbdisp_query.h"
 #include "cdb/cdbhash.h"
 #include "cdb/cdbsreh.h"
@@ -4437,16 +4436,6 @@ struct config_string ConfigureNamesString_gp[] =
 		&gp_server_version_string,
 		GP_VERSION,
 		NULL, NULL, NULL
-	},
-
-	{
-		{"gp_endpoints_token_operation", PGC_USERSET, UNGROUPED,
-		 gettext_noop("Forces the writer gang to do endpoint token operation in shared memory on QEs."),
-		 NULL,
-		 GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
-		},
-		&Gp_endpoints_token_operation, "",
-		NULL, assign_gp_endpoints_token_operation, NULL
 	},
 
 	/* End-of-list marker */

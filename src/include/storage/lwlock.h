@@ -149,7 +149,8 @@ extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 #define RelfilenodeGenLock			(&MainLWLockArray[PG_NUM_INDIVIDUAL_LWLOCKS + 8].lock)
 #define WorkFileManagerLock			(&MainLWLockArray[PG_NUM_INDIVIDUAL_LWLOCKS + 9].lock)
 #define DistributedLogTruncateLock	(&MainLWLockArray[PG_NUM_INDIVIDUAL_LWLOCKS + 10].lock)
-#define GP_NUM_INDIVIDUAL_LWLOCKS		10
+#define ParallelCursorEndpointLock	(&MainLWLockArray[PG_NUM_INDIVIDUAL_LWLOCKS + 11].lock)
+#define GP_NUM_INDIVIDUAL_LWLOCKS		11
 
 #define NUM_INDIVIDUAL_LWLOCKS (PG_NUM_INDIVIDUAL_LWLOCKS + \
 								GP_NUM_INDIVIDUAL_LWLOCKS)

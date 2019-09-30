@@ -185,6 +185,11 @@ typedef struct QueryDispatchDesc
 	List	   *cursorPositions;
 
 	/*
+	 * For parallel retrieve cursor. Pass cursor name to QEs.
+	 */
+	char	   *parallelCursorName;
+
+	/*
 	 * Set to true for CTAS and SELECT INTO. Set to false for ALTER TABLE
 	 * REORGANIZE. This is mainly used to track if the dispatched query is
 	 * meant for internal rewrite on QE segments or just for holding data from
@@ -250,7 +255,7 @@ typedef struct QueryDesc
 	uint64		es_processed;	/* # of tuples processed */
 	Oid			es_lastoid;		/* oid of row inserted */
 	bool		extended_query;   /* simple or extended query protocol? */
-	bool		parallel_cursor;   /* if is a parallel cursor */
+	bool		parallel_retrieve_cursor;   /* if is a PARALLEL RETRIEVE CURSOR */
 	char		*portal_name;	/* NULL for unnamed portal */
 
 	QueryDispatchDesc *ddesc;

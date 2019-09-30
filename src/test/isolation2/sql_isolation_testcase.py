@@ -54,6 +54,43 @@ def parse_include_statement(sql):
         raise SyntaxError("expected 'include: %s' to end with a semicolon." % stripped_command)
 
 
+class ConnectionInfo(object):
+    __instance = None
+
+    def __init__(self):
+        self.max_content_id = 0
+        if ConnectionInfo.__instance is not None:
+            raise Exception("ConnectionInfo is a singleton.")
+
+        query = ("SELECT content, hostname, port, role FROM gp_segment_configuration")
+
+        con = pygresql.pg.connect(dbname="postgres")
+        self._conn_map = con.query(query).getresult()
+        con.close()
+
+        ConnectionInfo.__instance = self
+        for content, _, _, _ in ConnectionInfo.__instance._conn_map:
+            if content >= self.max_content_id:
+                self.max_content_id = content + 1
+
+    @staticmethod
+    def __get_instance():
+        if ConnectionInfo.__instance is None:
+            return ConnectionInfo()
+        return ConnectionInfo.__instance
+
+    @staticmethod
+    def get_hostname_port(name, role_name):
+        content_id = int(name)
+        conn_map = ConnectionInfo.__get_instance()._conn_map
+        max_content_id = ConnectionInfo.__get_instance().max_content_id
+        real_content_id = content_id % max_content_id if content_id >= 0 else content_id % (-max_content_id)
+        for content, host, port, role in conn_map:
+            if real_content_id == content and role == role_name:
+                return (host, port)
+        raise Exception("Cannont find a connection with content_id=%d, role=%c" % (content_id, role_name))
+
+
 class GlobalShellExecutor(object):
     BASH_PS1 = 'test_sh$>'
 
@@ -68,7 +105,6 @@ class GlobalShellExecutor(object):
         # open pseudo-terminal to interact with subprocess
         self.master_fd, self.slave_fd = pty.openpty()
         self.sh_proc = subprocess.Popen(['/bin/bash', '--noprofile', '--norc', '--noediting', '-i'],
-                                        preexec_fn=os.setsid,
                                         stdin=self.slave_fd,
                                         stdout=self.slave_fd,
                                         stderr=self.slave_fd,
@@ -221,12 +257,21 @@ class SQLIsolationExecutor(object):
         else:
             self.dbname = os.environ.get('PGDATABASE')
 
+    # To indicate the session has not been created or terminated.
+    class SessionError(Exception):
+        def __init__(self, name, mode, msg):
+            super(SQLIsolationExecutor.SessionError, self).__init__(msg)
+            self.name = name
+            self.mode = mode
+
     class SQLConnection(object):
-        def __init__(self, out_file, name, mode, dbname):
+        def __init__(self, out_file, name, mode, dbname, user = None, passwd = None):
             self.name = name
             self.mode = mode
             self.out_file = out_file
             self.dbname = dbname
+            self.user = user
+            self.passwd = passwd
 
             parent_conn, child_conn = multiprocessing.Pipe(True)
             self.p = multiprocessing.Process(target=self.session_process, args=(child_conn,))   
@@ -242,10 +287,10 @@ class SQLIsolationExecutor(object):
 
         def session_process(self, pipe):
             sp = SQLIsolationExecutor.SQLSessionProcess(self.name, 
-                self.mode, pipe, self.dbname)
+                self.mode, pipe, self.dbname, user=self.user, passwd=self.passwd)
             sp.do()
 
-        def query(self, command, out_sh_cmd, global_sh_executor):
+        def query(self, command, out_sh_cmd, in_sh_cmd, global_sh_executor):
             print >>self.out_file
             self.out_file.flush()
             if len(command.strip()) == 0:
@@ -253,10 +298,23 @@ class SQLIsolationExecutor(object):
             if self.has_open:
                 raise Exception("Cannot query command while waiting for results")
 
+            if in_sh_cmd != None:
+                (hostname, port) = ConnectionInfo.get_hostname_port(self.name, 'p')
+                # Inject the current hostname and port to the shell.
+                global_sh_executor.exec_global_shell("GP_HOSTNAME=%s" % hostname, True)
+                global_sh_executor.exec_global_shell("GP_PORT=%s" % port, True)
+                sqls = global_sh_executor.exec_global_shell_with_orig_str(command, in_sh_cmd, True)
+                if (len(sqls) != 1):
+                    raise Exception("Invalid shell commmand: %v", sqls)
+                else:
+                    command = sqls[0]
+
             self.pipe.send((command, False))
             r = self.pipe.recv()
             if r is None:
                 raise Exception("Execution failed")
+            if re.match(r"^#.*:", r):
+                raise SQLIsolationExecutor.SessionError(self.name, self.mode, r)
 
             if out_sh_cmd != None:
                 new_out = global_sh_executor.exec_global_shell_with_orig_str(r.rstrip(), out_sh_cmd, True)
@@ -265,7 +323,18 @@ class SQLIsolationExecutor(object):
             else:
                 print >>self.out_file, r.rstrip()
 
-        def fork(self, command, blocking):
+        def fork(self, command, blocking, in_sh_cmd, global_sh_executor):
+            if in_sh_cmd != None:
+                (hostname, port) = ConnectionInfo.get_hostname_port(self.name, 'p')
+                # Inject the current hostname and port to the shell.
+                global_sh_executor.exec_global_shell("GP_HOSTNAME=%s" % hostname, True)
+                global_sh_executor.exec_global_shell("GP_PORT=%s" % port, True)
+                sqls = global_sh_executor.exec_global_shell_with_orig_str(command, in_sh_cmd, True)
+                if (len(sqls) != 1):
+                    raise Exception("Invalid shell commmand: %v", sqls)
+                else:
+                    command = sqls[0]
+
             print >>self.out_file, " <waiting ...>"
             self.pipe.send((command, True))
 
@@ -301,7 +370,7 @@ class SQLIsolationExecutor(object):
             self.p.terminate()
 
     class SQLSessionProcess(object):
-        def __init__(self, name, mode, pipe, dbname):
+        def __init__(self, name, mode, pipe, dbname, user = None, passwd = None):
             """
                 Constructor
             """
@@ -309,28 +378,38 @@ class SQLIsolationExecutor(object):
             self.mode = mode
             self.pipe = pipe
             self.dbname = dbname
+            self.passwd = passwd
+            self.user = user
+            # If there is an exception thrown when creating session, save it and send
+            # it to pipe when we get the first execute_command call.
+            self.create_exception = None
             if self.mode == "utility":
-                (hostname, port) = self.get_hostname_port(name, 'p')
+                (hostname, port) = ConnectionInfo.get_hostname_port(name, 'p')
                 self.con = self.connectdb(given_dbname=self.dbname,
                                           given_host=hostname,
                                           given_port=port,
-                                          given_opt="-c gp_session_role=utility")
+                                          given_opt="-c gp_session_role=utility",
+                                          given_user=user,
+                                          given_passwd=passwd)
             elif self.mode == "standby":
                 # Connect to standby even when it's role is recorded
                 # as mirror.  This is useful for scenarios where a
                 # test needs to promote a standby without using
                 # gpactivatestandby.
-                (hostname, port) = self.get_hostname_port(name, 'm')
+                (hostname, port) = ConnectionInfo.get_hostname_port(name, 'm')
                 self.con = self.connectdb(given_dbname=self.dbname,
                                           given_host=hostname,
-                                          given_port=port)
+                                          given_port=port,
+                                          given_user=user,
+                                          given_passwd=passwd)
             elif self.mode == "retrieve":
-                (hostname, port) = self.get_hostname_port(name, 'p')
+                (hostname, port) = ConnectionInfo.get_hostname_port(name, 'p')
                 self.con = self.connectdb(given_dbname=self.dbname,
                                           given_host=hostname,
                                           given_port=port,
                                           given_opt="-c gp_session_role=retrieve",
-                                          given_passwd="nopasswd")
+                                          given_user=user,
+                                          given_passwd=passwd)
             else:
                 self.con = self.connectdb(self.dbname)
 
@@ -354,7 +433,10 @@ class SQLIsolationExecutor(object):
                                                   passwd = given_passwd)
                     break
                 except Exception as e:
-                    if (("the database system is starting up" in str(e) or
+                    if self.mode == "retrieve" and ("auth token is invalid" in str(e) or "does not exist" in str(e)):
+                        self.create_exception = e
+                        break
+                    elif (("the database system is starting up" in str(e) or
                          "the database system is in recovery mode" in str(e)) and
                         retry > 1):
                         retry -= 1
@@ -362,22 +444,6 @@ class SQLIsolationExecutor(object):
                     else:
                         raise
             return con
-
-        def get_hostname_port(self, contentid, role):
-            """
-                Gets the port number/hostname combination of the
-                contentid and role
-            """
-            query = ("SELECT hostname, port FROM gp_segment_configuration WHERE"
-                     " content = ( %s %% (select max(content)+1 from gp_segment_configuration)) AND role = '%s'") % (contentid, role)
-            con = self.connectdb(self.dbname, given_opt="-c gp_session_role=utility")
-            r = con.query(query).getresult()
-            con.close()
-            if len(r) == 0:
-                raise Exception("Invalid content %s" % contentid)
-            if r[0][0] == socket.gethostname():
-                return (None, int(r[0][1]))
-            return (r[0][0], int(r[0][1]))
 
         # Print out a pygresql result set (a Query object, after the query
         # has been executed), in a format that imitates the default
@@ -470,14 +536,19 @@ class SQLIsolationExecutor(object):
             while c:
                 if wait:
                     time.sleep(0.1)
-                r = self.execute_command(c)
-                self.pipe.send(r)
+                if self.create_exception:
+                    # When parent process received this, it should know the connection has not been
+                    # created. Thus, the process entry should be cleared.
+                    self.pipe.send("#%s%s> %s" % (self.name, self.mode, str(self.create_exception)))
+                else:
+                    r = self.execute_command(c)
+                    self.pipe.send(r)
                 r = None
 
                 (c, wait) = self.pipe.recv()
 
 
-    def get_process(self, out_file, name, mode="", dbname=""):
+    def get_process(self, out_file, name, mode="", dbname="", user=None, passwd=None):
         """
             Gets or creates the process by the given name
         """
@@ -489,7 +560,7 @@ class SQLIsolationExecutor(object):
         if not (name, mode) in self.processes:
             if not dbname:
                 dbname = self.dbname
-            self.processes[(name, mode)] = SQLIsolationExecutor.SQLConnection(out_file, name, mode, dbname)
+            self.processes[(name, mode)] = SQLIsolationExecutor.SQLConnection(out_file, name, mode, dbname, user, passwd)
         return self.processes[(name, mode)]
 
     def quit_process(self, out_file, name, mode="", dbname=""):
@@ -532,6 +603,8 @@ class SQLIsolationExecutor(object):
         flag = ""
         con_mode = ""
         dbname = ""
+        retrieve_token = None
+        retrieve_user = None
         in_sh_cmd = None
         out_sh_cmd = None
         m = self.command_pattern.match(command)
@@ -571,13 +644,14 @@ class SQLIsolationExecutor(object):
                     if found_hd:
                         sql = ex_sql
 
-            # if set @in_sh
-            if in_sh_cmd != None:
-                sqls = global_sh_executor.exec_global_shell_with_orig_str(sql, in_sh_cmd, True)
-                if (len(sqls) != 1):
-                    raise Exception("Invalid shell commmand: %v", sqls)
-                else:
-                    sql = sqls[0]
+            # Get the token for "R:"
+            if con_mode == "retrieve":
+                out = global_sh_executor.exec_global_shell("echo ${RETRIEVE_TOKEN}", True)
+                if (len(out) > 0):
+                    retrieve_token = out[0]
+                out = global_sh_executor.exec_global_shell("echo ${RETRIEVE_USER}", True)
+                if (len(out) > 0):
+                    retrieve_user = out[0]
 
         if not flag:
             if sql.startswith('!'):
@@ -612,14 +686,14 @@ class SQLIsolationExecutor(object):
                     process_name,
                     dbname=dbname
                 ).query(
-                    load_helper_file(helper_file), out_sh_cmd, global_sh_executor
+                    load_helper_file(helper_file), out_sh_cmd, in_sh_cmd, global_sh_executor
                 )
             else:
-                self.get_process(output_file, process_name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, global_sh_executor)
+                self.get_process(output_file, process_name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, in_sh_cmd, global_sh_executor)
         elif flag == "&":
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), True)
+            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), True, in_sh_cmd, global_sh_executor)
         elif flag == ">":
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), False)
+            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), False, in_sh_cmd, global_sh_executor)
         elif flag == "<":
             if len(sql) > 0:
                 raise Exception("No query should be given on join")
@@ -635,9 +709,9 @@ class SQLIsolationExecutor(object):
                 process_names = [process_name]
 
             for name in process_names:
-                self.get_process(output_file, name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, global_sh_executor)
+                self.get_process(output_file, name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, in_sh_cmd, global_sh_executor)
         elif flag == "U&":
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), True)
+            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), True, in_sh_cmd, global_sh_executor)
         elif flag == "U<":
             if len(sql) > 0:
                 raise Exception("No query should be given on join")
@@ -647,7 +721,7 @@ class SQLIsolationExecutor(object):
                 raise Exception("No query should be given on quit")
             self.quit_process(output_file, process_name, con_mode, dbname=dbname)
         elif flag == "S":
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, global_sh_executor)
+            self.get_process(output_file, process_name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, in_sh_cmd, global_sh_executor)
         elif flag == "R":
             if process_name == '*':
                 process_names = [str(content) for content in self.get_all_primary_contentids(dbname)]
@@ -655,13 +729,18 @@ class SQLIsolationExecutor(object):
                 process_names = [process_name]
 
             for name in process_names:
-                self.get_process(output_file, name, con_mode, dbname=dbname).query(sql.strip(), out_sh_cmd, global_sh_executor)
+                try:
+                    self.get_process(output_file, name, con_mode, dbname=dbname, user=retrieve_user, passwd=retrieve_token).query(sql.strip(), out_sh_cmd, in_sh_cmd, global_sh_executor)
+                except SQLIsolationExecutor.SessionError as e:
+                    print >>output_file, str(e)
+                    self.processes[(e.name, e.mode)].terminate()
+                    del self.processes[(e.name, e.mode)]
         elif flag == "R&":
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).fork(sql.strip(), True)
+            self.get_process(output_file, process_name, con_mode, dbname=dbname, passwd=retrieve_token).fork(sql.strip(), True, in_sh_cmd, global_sh_executor)
         elif flag == "R<":
             if len(sql) > 0:
                 raise Exception("No query should be given on join")
-            self.get_process(output_file, process_name, con_mode, dbname=dbname).join()
+            self.get_process(output_file, process_name, con_mode, dbname=dbname, passwd=retrieve_token).join()
         elif flag == "Rq":
             if len(sql) > 0:
                 raise Exception("No query should be given on quit")
@@ -844,7 +923,16 @@ class SQLIsolationTestCase:
           this test case file is finished executing.
         - Sample 2: replaceing "@TOKEN1" by generated token which is fetch in sample1
 
-        There are some helper functions which will be sourced automatically to make above cases easier. See utils.sh for more information.
+        There are some helper functions which will be sourced automatically to make above
+        cases easier. See global_sh_executor.sh for more information.
+        $RETRIEVE_TOKEN and $RETRIEVE_USER are a special environment vars which will be read
+        by python to use them as the username and password for retrieve mode session. `None`
+        will be used if the value has not been set when start retrieve mode session.
+        $RETRIEVE_TOKEN can be set through helper function get_token_cell() in previous @out_sh,
+        overwrite it directly through @in_sh for the current statement.
+        NOTICE: There is a known issue when setting $RETRIEVE_TOKEN and $RETRIEVE_USER with
+        @in_sh -- The changes won't be see in current statement following the @in_sh. Instead,
+        they will take effect at the next statement.
 
         Catalog Modification:
 
