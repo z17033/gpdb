@@ -912,7 +912,7 @@ signal_receiver_abort(pid_t receiverPid, enum AttachStatus attachStatus)
 
 	elog(DEBUG3, "CDB_ENDPOINT: signal the receiver to abort.");
 
-	isAttached = attachStatus == Status_Attached;
+	isAttached = (attachStatus == Status_Attached);
 	if (receiverPid != InvalidPid && isAttached && receiverPid != MyProcPid)
 	{
 		SetBackendCancelMessage(receiverPid, "Signal the receiver to abort.");
