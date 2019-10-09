@@ -383,11 +383,17 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 	StringInfoData cmdStr;
 	List	   *cids;
 	enum EndPointExecPosition endPointExecPosition;
-	char	   *tokenStr = "";
+	char	   *tokenStr = NULL;
 
 	if (operator == 'r')
 	{
 		tokenStr = print_token(get_or_create_token_on_qd());
+		if (tokenStr == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("failed to create token string.")));
+		}
 	}
 
 	cids =
@@ -395,6 +401,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 
 	if (endPointExecPosition == ENDPOINT_ON_Entry_DB)
 	{
+		Assert(cursorName != NULL);
 		retVal = DatumGetBool(DirectFunctionCall3(
 						  gp_operate_endpoints_token, CharGetDatum(operator),
 					CStringGetDatum(tokenStr), CStringGetDatum(cursorName)));
@@ -405,7 +412,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 
 		initStringInfo(&cmdStr);
 
-		appendStringInfo(&cmdStr, "select __gp_operate_endpoints_token('%c', '%s', '%s')", operator,
+		appendStringInfo(&cmdStr, "select pg_catalog.__gp_operate_endpoints_token('%c', '%s', '%s')", operator,
 						 tokenStr, cursorName);
 		if (endPointExecPosition == ENDPOINT_ON_ALL_QE)
 		{
@@ -1275,9 +1282,6 @@ gp_operate_endpoints_token(PG_FUNCTION_ARGS)
 	bool		retVal = false;
 	const char *tokenStr = NULL;
 	const char *cursorName = NULL;
-
-	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
-		PG_RETURN_BOOL(false);
 
 	operation = PG_GETARG_CHAR(0);
 	tokenStr = PG_GETARG_CSTRING(1);

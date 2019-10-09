@@ -50,7 +50,6 @@
 
 #include <ctype.h>
 #include <limits.h>
-#include <stdlib.h>
 
 #include "catalog/index.h"
 #include "catalog/namespace.h"
