@@ -586,7 +586,9 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	 */
 	wait_receiver();
 
+	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	unset_endpoint_sender_pid(activeSharedEndpoint);
+	LWLockRelease(ParallelCursorEndpointLock);
 
 	/*
 	 * If all data get sent, hang the process and wait for QD to close it. The
@@ -597,7 +599,10 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	 */
 	wait_parallel_retrieve_close();
 
+	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	free_endpoint(activeSharedEndpoint);
+	LWLockRelease(ParallelCursorEndpointLock);
+
 	activeSharedEndpoint = NULL;
 	detach_mq(activeDsmSeg);
 	activeDsmSeg = NULL;
@@ -605,7 +610,7 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 }
 
 /*
- * AllocEndpointOfToken - Allocate an EndpointDesc entry in shared memroy.
+ * alloc_endpoint - Allocate an EndpointDesc entry in shared memroy.
  *
  * cursorName - the parallel retrieve cursor name.
  * dsmHandle  - dsm handle of shared memory message queue.
@@ -631,7 +636,7 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 		{
 			if (sharedEndpoints[i].empty)
 			{
-				/* pretend to set a valid token */
+				/* pretend to set a valid endpoint */
 				snprintf(sharedEndpoints[i].name, ENDPOINT_NAME_LEN, "%s",
 						 DUMMY_ENDPOINT_NAME);
 				snprintf(sharedEndpoints[i].cursorName, NAMEDATALEN, "%s",
@@ -869,6 +874,7 @@ detach_mq(dsm_segment *dsmSeg)
  *
  * Clean the EndpointDesc entry sender pid when endpoint finish it's
  * job or abort.
+ * Needs to be called with exclusive lock on ParallelCursorEndpointLock.
  */
 void
 unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
@@ -879,10 +885,8 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 	tag.sessionID = gp_session_id;
 	tag.userID = GetUserId();
 
-	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	if (!endPointDesc || endPointDesc->empty)
 	{
-		LWLockRelease(ParallelCursorEndpointLock);
 		return;
 	}
 	elog(DEBUG3, "CDB_ENDPOINT: unset endpoint sender pid.");
@@ -924,8 +928,6 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 				SetLatch(&sessionInfoEntry->udfCheckLatch);
 		}
 	}
-
-	LWLockRelease(ParallelCursorEndpointLock);
 }
 
 /*
@@ -955,8 +957,13 @@ endpoint_abort(void)
 {
 	if (activeSharedEndpoint)
 	{
+		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
+		/* These two have to be called in one lock section.
+		 * Otherwise the write gang could get a endpoint which should be deleted
+		 * already.*/
 		unset_endpoint_sender_pid(activeSharedEndpoint);
 		free_endpoint(activeSharedEndpoint);
+		LWLockRelease(ParallelCursorEndpointLock);
 		activeSharedEndpoint = NULL;
 	}
 
@@ -1022,6 +1029,8 @@ wait_parallel_retrieve_close(void)
 
 /*
  * free_endpoint - Frees the given endpoint.
+ *
+ * Needs to be called with exclusive lock on ParallelCursorEndpointLock.
  */
 void
 free_endpoint(volatile EndpointDesc * endpoint)
@@ -1031,7 +1040,6 @@ free_endpoint(volatile EndpointDesc * endpoint)
 
 	elog(DEBUG3, "CDB_ENDPOINTS: Free endpoint '%s'.", endpoint->name);
 
-	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	endpoint->databaseID = InvalidOid;
 	endpoint->mqDsmHandle = DSM_HANDLE_INVALID;
 	endpoint->sessionID = InvalidSession;
@@ -1040,8 +1048,6 @@ free_endpoint(volatile EndpointDesc * endpoint)
 	memset((char *) endpoint->name, '\0', ENDPOINT_NAME_LEN);
 	ResetLatch(&endpoint->ackDone);
 	DisownLatch(&endpoint->ackDone);
-
-	LWLockRelease(ParallelCursorEndpointLock);
 }
 
 /*
