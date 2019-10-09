@@ -11,12 +11,12 @@
  * RETRIEVE CURSOR:
  * (1) An endpoint is on QD only if the query of the parallel cursor needs to be
  *	   finally gathered by the master. e.g.:
- * > CREATE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 ORDER BY C1;
+ * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 ORDER BY C1;
  * (2) The endpoints are on specific segments node if the direct dispatch happens.
  *	   e.g.:
- * > CREATE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 WHERE C1=1 OR C1=2;
+ * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 WHERE C1=1 OR C1=2;
  * (3) The endpoints are on all segments node. e.g:
- * > CREATE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1;
+ * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1;
  *
  * When a parallel retrieve cusor is declared, the query plan will be dispatched
  * to the corresponding QEs. Before the query execution, endpoints will be
@@ -108,6 +108,24 @@ typedef struct SessionTokenTag
 	Oid			userID;
 }	SessionTokenTag;
 
+/*
+ * sharedSessionInfoHash is located in shared memory on each segment for
+ * authentication purpose.
+ *
+ * For each session, generate auth token and create SessionInfoEntry for
+ * each user who 'DECLARE PARALLEL CURSOR'.
+ * Once session exit, clean entries for current session.
+ *
+ * The issue here is that there is no way to register clean function during
+ * session exit on segments(QE exit does not mean session exit). So we
+ * register transaction callback(session_info_clean_callback) to clean
+ * entries for each transaction exit callback instead. And create new entry
+ * if not exists.
+ *
+ * Since in a transaction, user can 'SET ROLE' to a different user, sessionUserList
+ * is used to track userIDs. When clean callback(session_info_clean_callback)
+ * executes, it removes all entries for these users.
+ */
 typedef struct SessionInfoEntry
 {
 	SessionTokenTag tag;
@@ -132,11 +150,13 @@ typedef struct SessionInfoEntry
 	int8		token[ENDPOINT_TOKEN_LEN];
 }	SessionInfoEntry;
 
-/* Point to EndpointDesc entries in shared memory */
-static EndpointDesc *sharedEndpoints = NULL;
-
 /* Shared hash table for session infos */
 static HTAB *sharedSessionInfoHash = NULL;
+/* Track userIDs to clean up SessionInfoEntry */
+static List *sessionUserList = NULL;
+
+/* Point to EndpointDesc entries in shared memory */
+static EndpointDesc *sharedEndpoints = NULL;
 
 /* Current EndpointDesc entry for sender.
  * It is set when create dest receiver and unset when destroy it. */
@@ -1300,6 +1320,7 @@ register_session_info_callback(void)
 
 	if (!registered)
 	{
+		registered = true;
 		/* Register session_info_clean_callback only for UDF execute processes */
 		RegisterXactCallback(session_info_clean_callback, NULL);
 	}
@@ -1319,30 +1340,39 @@ session_info_clean_callback(XactEvent ev, void *vp)
 		 ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT) &&
 		(Gp_is_writer || Gp_role == GP_ROLE_DISPATCH))
 	{
-		elog(
-			 DEBUG3,
-		"CDB_ENDPOINT: sender_xact_abort_callback clean token for session %d",
+		elog(DEBUG3,
+			 "CDB_ENDPOINT: session_info_clean_callback clean token for session %d",
 			 EndpointCtl.sessionID);
-		SessionInfoEntry *entry;
-		SessionTokenTag tag;
 
-		/*
-		 * When proc exit, the gp_session_id is -1, so use our record session
-		 * id instead
-		 */
-		tag.sessionID = EndpointCtl.sessionID;
-		tag.userID = GetUserId();
-
-		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-		entry = hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, NULL);
-		if (!entry)
+		if (sessionUserList && sessionUserList->length > 0)
 		{
-			elog(DEBUG3,
-			  "CDB_ENDPOINT: sender_xact_abort_callback no entry exists for "
-				 "user id: %d, session: %d",
-				 tag.userID, EndpointCtl.sessionID);
+			ListCell   *cell;
+			LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
+			foreach(cell, sessionUserList)
+			{
+				bool find = false;
+				SessionTokenTag tag;
+
+				/*
+				 * When proc exit, the gp_session_id is -1, so use our record session
+				 * id instead
+				 */
+				tag.sessionID = EndpointCtl.sessionID;
+				tag.userID = lfirst_oid(cell);
+
+				hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, &find);
+				if (find)
+				{
+					elog(DEBUG3,
+						 "CDB_ENDPOINT: session_info_clean_callback removes exists entry for "
+						 "user id: %d, session: %d",
+						 tag.userID, EndpointCtl.sessionID);
+				}
+			}
+			LWLockRelease(ParallelCursorEndpointLock);
+			list_free(sessionUserList);
+			sessionUserList = NULL;
 		}
-		LWLockRelease(ParallelCursorEndpointLock);
 	}
 }
 
@@ -1537,6 +1567,12 @@ wait_for_ready_by_cursor_name(const char *cursorName, const char *tokenStr)
 	 */
 	if (!found)
 	{
+		/* Track userID in current transaction */
+		MemoryContext oldMemoryCtx = CurrentMemoryContext;
+		MemoryContextSwitchTo(TopMemoryContext);
+		sessionUserList = lappend_oid(sessionUserList, GetUserId());
+		MemoryContextSwitchTo(oldMemoryCtx);
+
 		InitSharedLatch(&infoEntry->udfCheckLatch);
 		OwnLatch(&infoEntry->udfCheckLatch);
 	}
