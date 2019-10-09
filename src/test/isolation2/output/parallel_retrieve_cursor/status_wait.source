@@ -528,7 +528,7 @@ DETAIL:  An endpoint can only be attached by one retrieving session.
  senderpid31| t        | READY
 (1 row)
 -- run 'kill -s INT senderpid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
  ?column? 
 ----------
  1        
@@ -657,7 +657,7 @@ DECLARE
  senderpid41| t        | READY
 (1 row)
 -- run 'kill -s QUIT senderpid' to cancel the endpoint execution backend, retrieve session still can work
-1R: @in_sh 'kill -s QUIT ${PID41} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s QUIT ${PID41} && echo "${RAW_STR}" ': SELECT 1;
  ?column? 
 ----------
  1        
@@ -799,7 +799,7 @@ ERROR:  failed to attach non-existing endpoint endpoint_id5_2 (cdbendpointretrie
  senderpid51| t        | READY
 (1 row)
 -- run 'kill -s TERM senderpid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;
  ?column? 
 ----------
  1        
@@ -926,7 +926,7 @@ DECLARE
  98 
 (37 rows)
 -- run 'kill -s INT QDPid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID61} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID61} && echo "${RAW_STR}" ': SELECT 1;
  ?column? 
 ----------
  1        
@@ -1052,7 +1052,7 @@ DECLARE
  98 
 (37 rows)
 -- run 'kill -s INT QDPid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID611} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID611} && echo "${RAW_STR}" ': SELECT 1;
  ?column? 
 ----------
  1        

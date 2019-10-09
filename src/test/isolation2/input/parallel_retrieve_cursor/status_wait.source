@@ -74,7 +74,7 @@ insert into t1 select generate_series(1,100);
 -- get senderpid which is endpoint execution backend
 0R: @out_sh 'get_cell PID31 3 1 ; sub "$PID31[ \t]*" senderpid31': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 -- run 'kill -s INT senderpid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
@@ -98,7 +98,7 @@ insert into t1 select generate_series(1,100);
 -- get senderpid which is endpoint execution backend
 0R: @out_sh 'get_cell PID41 3 1 ; sub "${PID41}[ \t]*" senderpid41': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 -- run 'kill -s QUIT senderpid' to cancel the endpoint execution backend, retrieve session still can work
-1R: @in_sh 'kill -s QUIT ${PID41} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s QUIT ${PID41} && echo "${RAW_STR}" ': SELECT 1;
 -- exit this session because the connection closed, so that it will re-connect next time use this session.
 0Rq:
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
@@ -130,7 +130,7 @@ insert into t1 select generate_series(1,100);
 -- get senderpid which is endpoint execution backend
 0R: @out_sh 'get_cell PID51 3 1 ; sub "${PID51}[ \t]*" senderpid51': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 -- run 'kill -s TERM senderpid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
@@ -154,7 +154,7 @@ insert into t1 select generate_series(1,100);
 0R: @in_sh 'sub_endpoint_name @ENDPOINT6': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT6";
 1R: @in_sh 'sub_endpoint_name @ENDPOINT6': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT6";
 -- run 'kill -s INT QDPid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID61} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID61} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
@@ -178,7 +178,7 @@ insert into t1 select generate_series(1,100);
 0R: @in_sh 'sub_endpoint_name @ENDPOINT61': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT61";
 1R: @in_sh 'sub_endpoint_name @ENDPOINT61': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT61";
 -- run 'kill -s INT QDPid' to cancel the endpoint execution backend, retrieve session still can work
-0R: @in_sh 'kill -s INT ${PID611} && echo "${RAW_STR}" ': SELECT 1;
+42: @in_sh 'kill -s INT ${PID611} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
