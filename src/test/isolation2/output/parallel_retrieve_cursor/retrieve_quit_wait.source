@@ -229,20 +229,30 @@ DECLARE
 (3 rows)
 -- quit the retrieve session
 0Rq: ... <quitting>
-
+-- Now the interrupt is checked using WaitLatch() for time: WAIT_NORMAL_TIMEOUT,
+-- so here the sleep time should be greater than WAIT_NORMAL_TIMEOUT,
+-- to make sure that the cancel interrupt was handled.
+1: SELECT pg_sleep(0.4);
+ pg_sleep 
+----------
+          
+(1 row)
+-- When the retrieve session was terminated, the endpoint has not been fully retrieved
+-- by this retrieve process should be cancelled.
+-- The endpoint on seg0 for c1 should firstly become to RELEASED (the retrieve process set it),
+-- and then was removed (during the endpoint QE cancelled)
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
- cursorname | status   
-------------+----------
- c1         | RELEASED 
- c2         | FINISH   
- c3         | READY    
- c1         | READY    
- c2         | FINISH   
- c3         | READY    
- c1         | READY    
- c2         | FINISH   
- c3         | READY    
-(9 rows)
+ cursorname | status 
+------------+--------
+ c2         | FINISH 
+ c3         | READY  
+ c1         | READY  
+ c2         | FINISH 
+ c3         | READY  
+ c1         | READY  
+ c2         | FINISH 
+ c3         | READY  
+(8 rows)
 
 -- Since c1 has been only partially retrieved, an error will be raised when transaction ends.
 1: END;

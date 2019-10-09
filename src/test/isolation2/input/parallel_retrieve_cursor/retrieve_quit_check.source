@@ -37,8 +37,10 @@ insert into t1 select generate_series(1,100);
 1: SELECT pg_sleep(0.4);
 -- make sure no error for c2
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
--- The endpoint on seg0 for c1 should be removed since the retrieve session was terminated when
--- the endpoint has not been fully retrieved.
+-- When the retrieve session was terminated, the endpoint has not been fully retrieved
+-- by this retrieve process should be cancelled.
+-- The endpoint on seg0 for c1 should firstly become to RELEASED (the retrieve process set it),
+-- and then was removed (during the endpoint QE cancelled)
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
 
 -- verify endpoints for c1 is gone

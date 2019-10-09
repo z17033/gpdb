@@ -153,8 +153,10 @@ DETAIL:  An endpoint can only be attached by one retrieving session.
 ----------
  f        
 (1 row)
--- The endpoint on seg0 for c1 should be removed since the retrieve session was terminated when
--- the endpoint has not been fully retrieved.
+-- When the retrieve session was terminated, the endpoint has not been fully retrieved
+-- by this retrieve process should be cancelled.
+-- The endpoint on seg0 for c1 should firstly become to RELEASED (the retrieve process set it),
+-- and then was removed (during the endpoint QE cancelled)
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
  cursorname | status 
 ------------+--------
