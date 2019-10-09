@@ -73,25 +73,16 @@ struct EndpointControl EndpointCtl = {PRCER_NONE, InvalidSession};
 void
 parse_token(int8 *token /* out */ , const char *tokenStr)
 {
-	static const char *fmt = "Invalid token \"%s\"";
+	const char *msg = "Retrieve auth token is invalid";
 
 	if (tokenStr[0] == 't' && tokenStr[1] == 'k' &&
 		strlen(tokenStr) == ENDPOINT_TOKEN_STR_LEN)
 	{
-		PG_TRY();
-		{
-			hex_decode(tokenStr + 2, ENDPOINT_TOKEN_LEN * 2, (char *) token);
-		}
-		PG_CATCH();
-		{
-			/* Create a general message on purpose for security concerns. */
-			elog(ERROR, fmt, tokenStr);
-		}
-		PG_END_TRY();
+		hex_decode(tokenStr + 2, ENDPOINT_TOKEN_LEN * 2, (char *) token);
 	}
 	else
 	{
-		elog(ERROR, fmt, tokenStr);
+		ereport(FATAL, (errcode(ERRCODE_INVALID_PASSWORD), errmsg("%s", msg)));
 	}
 }
 

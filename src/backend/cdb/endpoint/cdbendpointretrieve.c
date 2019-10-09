@@ -105,21 +105,9 @@ bool
 AuthEndpoint(Oid userID, const char *tokenStr)
 {
 	bool		isFound = false;
-	bool		parseError = false;
 	int8		token[ENDPOINT_TOKEN_LEN] = {0};
 
-	PG_TRY();
-	{
-		parse_token(token, tokenStr);
-	}
-	PG_CATCH();
-	{
-		parseError = true;
-	}
-	PG_END_TRY();
-
-	if (parseError)
-		return isFound;
+	parse_token(token, tokenStr);
 
 	EndpointCtl.sessionID = get_session_id_for_auth(userID, token);
 	if (EndpointCtl.sessionID != InvalidSession)
