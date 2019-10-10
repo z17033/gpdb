@@ -38,7 +38,7 @@
  *
  * The token is stored in a different structure SessionInfoEntry to make the
  * tokens same for all endpoints in the same session. The token is created on
- * QD and sent to QE's write gang by internal udf gp_operate_endpoints_token after
+ * QD and sent to QE's write gang by internal udf gp_operate_endpoints after
  * endpoint intialization and query starts. This happens on write gang since read
  * gang is busy with executing query plan and cannot respond to QD's command.
  *
@@ -403,7 +403,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 	{
 		Assert(cursorName != NULL);
 		retVal = DatumGetBool(DirectFunctionCall3(
-						  gp_operate_endpoints_token, CharGetDatum(operator),
+						  gp_operate_endpoints, CharGetDatum(operator),
 					CStringGetDatum(tokenStr), CStringGetDatum(cursorName)));
 	}
 	else
@@ -412,7 +412,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 
 		initStringInfo(&cmdStr);
 
-		appendStringInfo(&cmdStr, "select \"pg_catalog\".\"__gp_operate_endpoints_token\"('%c', '%s', %s);", operator,
+		appendStringInfo(&cmdStr, "select \"pg_catalog\".\"__gp_operate_endpoints\"('%c', '%s', %s);", operator,
 						 tokenStr, TextDatumGetCString(DirectFunctionCall1(quote_literal, CStringGetTextDatum(cursorName))));
 		if (endPointExecPosition == ENDPOINT_ON_ALL_QE)
 		{
@@ -442,7 +442,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 				ereport(ERROR,
 						(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
 						 errmsg("could not get return value of UDF "
-							  "__gp_operate_endpoints_token() from segment"),
+							  "__gp_operate_endpoints() from segment"),
 						 errdetail("%s", msg)));
 			}
 
@@ -454,7 +454,7 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("unexpected result set received from "
-								"__gp_operate_endpoints_token()"),
+								"__gp_operate_endpoints()"),
 						 errdetail("Result set expected to be 1 row and 1 "
 								 "column, but it had %d rows and %d columns",
 								   ntuples, nfields)));
@@ -901,7 +901,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 	/*
 	 * Only the endpoint QE/QD execute this unset sender pid function. The
 	 * sender pid in Endpoint entry must be MyProcPid or InvalidPid. Note the
-	 * "gp_operate_endpoints_token" UDF dispatch comment.
+	 * "gp_operate_endpoints" UDF dispatch comment.
 	 */
 	Assert(MyProcPid == endPointDesc->senderPid ||
 		   endPointDesc->senderPid == InvalidPid);
@@ -913,7 +913,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 
 		/*
 		 * sessionInfoEntry may get removed on process(which executed
-		 * gp_operate_endpoints_token('r', *) UDF). This means xact finished.
+		 * gp_operate_endpoints('r', *) UDF). This means xact finished.
 		 * No need to set latch.
 		 */
 		if (sessionInfoEntry)
@@ -1270,7 +1270,7 @@ check_dispatch_connection(void)
 }
 
 /*
- * gp_operate_endpoints_token - Operation for EndpointDesc entries on endpoint.
+ * gp_operate_endpoints - Operation for EndpointDesc entries on endpoint.
  *
  * Dispatch this UDF by "CdbDispatchCommandToSegments" and "CdbDispatchCommand",
  * It'll always dispatch to writer gang.
@@ -1278,11 +1278,11 @@ check_dispatch_connection(void)
  * c: [Check] check if the endpoints have been finished retrieving in a non-blocking way.
  * w: [Wait] check if the endpoints have been finished retrieving in a blocking way. It
  *	  will return until endpoints were finished, or any error occurs.
- * r: [Ready] wait for the QE or the entry db initializing endpoints. It will return
- *	  until dest receiver is ready or timeout(5 seconds).
+ * r: [Ready] dispatch token to QE and wait for the QE or the entry db initializing
+ *    endpoints. It will return until dest receiver is ready or timeout(5 seconds).
  */
 Datum
-gp_operate_endpoints_token(PG_FUNCTION_ARGS)
+gp_operate_endpoints(PG_FUNCTION_ARGS)
 {
 	char		operation;
 	bool		retVal = false;
@@ -1307,7 +1307,7 @@ gp_operate_endpoints_token(PG_FUNCTION_ARGS)
 			break;
 		default:
 			elog(ERROR,
-				 "Failed to execute gp_operate_endpoints_token('%c', '%s')",
+				 "Failed to execute gp_operate_endpoints('%c', '%s')",
 				 operation, tokenStr);
 			retVal = false;
 	}
@@ -1320,7 +1320,7 @@ gp_operate_endpoints_token(PG_FUNCTION_ARGS)
  * Register SessionInfoEntry clean up callback
  *
  * Since the SessionInfoEntry is created during WaitEndpointReady through
- * gp_operate_endpoints_token('r', *) UDF execute process(which is write gang or
+ * gp_operate_endpoints('r', *) UDF execute process(which is write gang or
  * QD), so callback needs to be registered on these processes.
  */
 void

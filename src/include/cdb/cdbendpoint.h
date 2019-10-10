@@ -90,7 +90,7 @@ extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const 
 extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest);
 
 /* UDFs for endpoints internal operation */
-extern Datum gp_operate_endpoints_token(PG_FUNCTION_ARGS);
+extern Datum gp_operate_endpoints(PG_FUNCTION_ARGS);
 extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 
