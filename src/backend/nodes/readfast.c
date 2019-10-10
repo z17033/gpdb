@@ -1133,6 +1133,7 @@ _readCreateStmt_common(CreateStmt *local_node)
 		   local_node->relKind == RELKIND_COMPOSITE_TYPE ||
 		   local_node->relKind == RELKIND_FOREIGN_TABLE ||
 		   local_node->relKind == RELKIND_UNCATALOGED ||
+		   local_node->relKind == RELKIND_MATVIEW ||
 		   IsAppendonlyMetadataRelkind(local_node->relKind));
 	Assert(local_node->oncommit <= ONCOMMIT_DROP);
 }
@@ -1481,6 +1482,7 @@ _readPlannedStmt(void)
 	READ_UINT64_FIELD(query_mem);
 	READ_NODE_FIELD(intoClause);
 	READ_NODE_FIELD(copyIntoClause);
+	READ_NODE_FIELD(refreshClause);
 	READ_INT8_FIELD(metricsQueryType);
 	READ_DONE();
 }
@@ -2298,14 +2300,12 @@ _readFlow(void)
 	READ_LOCALS(Flow);
 
 	READ_ENUM_FIELD(flotype, FlowType);
-	READ_ENUM_FIELD(req_move, Movement);
 	READ_ENUM_FIELD(locustype, CdbLocusType);
 	READ_INT_FIELD(segindex);
 	READ_INT_FIELD(numsegments);
 
 	READ_NODE_FIELD(hashExprs);
 	READ_NODE_FIELD(hashOpfamilies);
-	READ_NODE_FIELD(flow_before_req_move);
 
 	READ_DONE();
 }
@@ -3328,6 +3328,9 @@ readNodeBinary(void)
 				break;
 			case T_CopyIntoClause:
 				return_value = _readCopyIntoClause();
+				break;
+			case T_RefreshClause:
+				return_value = _readRefreshClause();
 				break;
 			case T_Var:
 				return_value = _readVar();

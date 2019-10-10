@@ -135,6 +135,7 @@ _copyPlannedStmt(const PlannedStmt *from)
 
 	COPY_NODE_FIELD(intoClause);
 	COPY_NODE_FIELD(copyIntoClause);
+	COPY_NODE_FIELD(refreshClause);
 	COPY_SCALAR_FIELD(metricsQueryType);
 
 	return newnode;
@@ -1555,6 +1556,20 @@ _copyCopyIntoClause(const CopyIntoClause *from)
 }
 
 /*
+ * _copyRefreshClause
+ */
+static RefreshClause *
+_copyRefreshClause(const RefreshClause *from)
+{
+	RefreshClause *newnode = makeNode(RefreshClause);
+
+	COPY_SCALAR_FIELD(concurrent);
+	COPY_NODE_FIELD(relation);
+
+	return newnode;
+}
+
+/*
  * We don't need a _copyExpr because Expr is an abstract supertype which
  * should never actually get instantiated.  Also, since it has no common
  * fields except NodeTag, there's no need for a helper routine to factor
@@ -2393,13 +2408,11 @@ _copyFlow(const Flow *from)
 	Flow   *newnode = makeNode(Flow);
 
 	COPY_SCALAR_FIELD(flotype);
-	COPY_SCALAR_FIELD(req_move);
 	COPY_SCALAR_FIELD(locustype);
 	COPY_SCALAR_FIELD(segindex);
 	COPY_SCALAR_FIELD(numsegments);
 	COPY_NODE_FIELD(hashExprs);
 	COPY_NODE_FIELD(hashOpfamilies);
-	COPY_NODE_FIELD(flow_before_req_move);
 
 	return newnode;
 }
@@ -2495,6 +2508,7 @@ _copyRestrictInfo(const RestrictInfo *from)
 	COPY_SCALAR_FIELD(outerjoin_delayed);
 	COPY_SCALAR_FIELD(can_join);
 	COPY_SCALAR_FIELD(pseudoconstant);
+	COPY_SCALAR_FIELD(contain_outer_query_references);
 	COPY_BITMAPSET_FIELD(clause_relids);
 	COPY_BITMAPSET_FIELD(required_relids);
 	COPY_BITMAPSET_FIELD(outer_relids);
@@ -5077,6 +5091,7 @@ _copySliceTable(const SliceTable *from)
 {
 	SliceTable *newnode = makeNode(SliceTable);
 
+	COPY_BITMAPSET_FIELD(used_subplans);
 	COPY_SCALAR_FIELD(nMotions);
 	COPY_SCALAR_FIELD(nInitPlans);
 	COPY_SCALAR_FIELD(localSlice);
@@ -5540,6 +5555,9 @@ copyObject(const void *from)
 			break;
 		case T_CopyIntoClause:
 			retval = _copyCopyIntoClause(from);
+			break;
+		case T_RefreshClause:
+			retval = _copyRefreshClause(from);
 			break;
 		case T_Var:
 			retval = _copyVar(from);
