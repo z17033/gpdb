@@ -475,7 +475,7 @@ DECLARE
 (10 rows)
 -- a new retrieve session should report error
 3R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT3";
-ERROR:  Endpoint endpoint_id3_1 is already attached by receiver(pid: PID) (cdbendpointretrieve.c:LINENO)
+ERROR:  endpoint endpoint_id3_1 is already attached by receiver(pid: PID)
 DETAIL:  An endpoint can only be attached by one retrieving session.
 -- quit this new retrieve session
 3Rq: ... <quitting>
@@ -535,7 +535,7 @@ DETAIL:  An endpoint can only be attached by one retrieving session.
 (1 row)
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:  <... completed>
-ERROR:  Endpoint for 'c3' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c3' get aborted.
 ERROR:  canceling MPP operation
 -- check no endpoint info left
 2: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3' AND token='@TOKEN3';
@@ -748,7 +748,7 @@ DECLARE
 (10 rows)
 -- 1R still bind to Test4 session, so can not retrieve from current endpoint.
 1R: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
-ERROR:  failed to attach non-existing endpoint endpoint_id5_2 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id5_2 
 -- Since seg1 retrieve session is bind to Test4 session. And Test4 session get killed. We need to restart it.
 1Rq: ... <quitting>
 1R: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
@@ -806,7 +806,7 @@ ERROR:  failed to attach non-existing endpoint endpoint_id5_2 (cdbendpointretrie
 (1 row)
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:  <... completed>
-ERROR:  Endpoint for 'c5' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c5' get aborted.
 ERROR:  terminating connection due to administrator command  (seg0 10.34.50.67:25432 pid=12905)
 -- check no endpoint info left
 2: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5' AND token='@TOKEN5';

@@ -115,8 +115,10 @@ void
 SetParallelCursorExecRole(enum ParallelRetrCursorExecRole role)
 {
 	if (EndpointCtl.GpPrceRole != PRCER_NONE && EndpointCtl.GpPrceRole != role)
-		elog(ERROR, "endpoint role %s is already set to %s",
-			 endpoint_role_to_string(EndpointCtl.GpPrceRole), endpoint_role_to_string(role));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("endpoint role %s is already set to %s",
+							   endpoint_role_to_string(EndpointCtl.GpPrceRole),
+							   endpoint_role_to_string(role))));
 
 	elog(DEBUG3, "CDB_ENDPOINT: set endpoint role to %s",
 		 endpoint_role_to_string(role));
@@ -160,8 +162,7 @@ endpoint_role_to_string(enum ParallelRetrCursorExecRole role)
 			return "[END POINT NONE]";
 
 		default:
-			elog(ERROR, "unknown end point role %d", role);
-			return NULL;
+			Assert(false);
 	}
 }
 
@@ -194,7 +195,10 @@ Datum
 gp_endpoints_info(PG_FUNCTION_ARGS)
 {
 	if (Gp_role != GP_ROLE_DISPATCH)
-		elog(ERROR, "gp_endpoints_info() only can be called on query dispatcher");
+		ereport(
+			ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+			errmsg(
+				 "gp_endpoints_info() only can be called on query dispatcher")));
 
 	bool		allSessions = PG_GETARG_BOOL(0);
 	FuncCallContext *funcctx;
@@ -246,15 +250,20 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 
 		if (cdb_pgresults.numResults == 0)
 		{
-			elog(ERROR,
-			   "gp_endpoints_info didn't get back any data from the segDBs");
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("gp_endpoints_info didn't get back any data "
+								   "from the segDBs")));
 		}
 		for (int i = 0; i < cdb_pgresults.numResults; i++)
 		{
 			if (PQresultStatus(cdb_pgresults.pg_results[i]) != PGRES_TUPLES_OK)
 			{
 				cdbdisp_clearCdbPgResults(&cdb_pgresults);
-				elog(ERROR, "gp_endpoints_info(): resultStatus is not tuples_Ok");
+				ereport(
+					ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg(
+						 "gp_endpoints_info(): resultStatus is not tuples_Ok")));
 			}
 			res_number += PQntuples(cdb_pgresults.pg_results[i]);
 		}
@@ -539,7 +548,7 @@ status_enum_to_string(enum AttachStatus status)
 			result = GP_ENDPOINT_STATUS_RELEASED;
 			break;
 		default:
-			elog(ERROR, "unknown end point status %d", status);
+			Assert(false);
 			break;
 	}
 	return result;
@@ -567,6 +576,6 @@ status_string_to_enum(const char *status)
 	}
 	else
 	{
-		elog(ERROR, "unknown end point status %s", status);
+		Assert(false);
 	}
 }

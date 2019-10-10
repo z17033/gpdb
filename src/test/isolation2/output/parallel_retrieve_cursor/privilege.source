@@ -182,8 +182,8 @@ DECLARE
 
 --- Retrieve c2(which belone to u1) but current user is uu1.
 3R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 0Rq: ... <quitting>
 3Rq: ... <quitting>
 1<:  <... completed>
@@ -262,14 +262,14 @@ SET
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
 --- Switch back to u1 and retrieve all to finish the test
 *R: SET SESSION AUTHORIZATION u1;
@@ -407,14 +407,14 @@ SET
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator to retrieve.
 
 --- Switch back to u1 and retrieve all to finish the test
 *R: SET SESSION AUTHORIZATION u1;
@@ -478,8 +478,8 @@ DECLARE
 1: SET SESSION AUTHORIZATION u2;
 SET
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator.
 
 1: END;
 END
@@ -500,8 +500,8 @@ GRANT
 1: SET SESSION AUTHORIZATION u2;
 SET
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
-ERROR:  The PARALLEL RETRIEVE CURSOR was created by a different user.
-HINT:  Using the same user as the PARALLEL RETRIEVE CURSOR creator.
+ERROR:  the PARALLEL RETRIEVE CURSOR was created by a different user.
+HINT:  using the same user as the PARALLEL RETRIEVE CURSOR creator.
 
 1: END;
 END

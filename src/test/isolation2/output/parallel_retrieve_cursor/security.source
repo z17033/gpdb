@@ -82,7 +82,7 @@ ERROR:  Only allow RETRIEVE, SELECT and GUC statements for retrieve role
 (1 row)
 -- Test: UDF can not be allowed
 0R: SELECT myappend(ARRAY[42,6], 21);
-ERROR:  Only builtin functions can be called for retrieve role (aclchk.c:LINENO)
+ERROR:  Only builtin functions can be called for retrieve role
 -- Test: Create UDF can not allowed
 0R: CREATE OR REPLACE FUNCTION myappend1(anyarray, anyelement) RETURNS anyarray AS $$ SELECT $1 || $2 $$ LANGUAGE SQL;
 ERROR:  Only allow RETRIEVE, SELECT and GUC statements for retrieve role
@@ -90,15 +90,15 @@ ERROR:  Only allow RETRIEVE, SELECT and GUC statements for retrieve role
 -- Test: Different illegal tokens always lead to a same general message
 ---- Illegal tokens
 1R: RETRIEVE ALL FROM ENDPOINT abc;
-ERROR:  failed to attach non-existing endpoint abc (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint abc
 1R: RETRIEVE ALL FROM ENDPOINT 123;
 ERROR:  syntax error at or near "123"
 LINE 1: RETRIEVE ALL FROM ENDPOINT 123;
                                    ^
 1R: RETRIEVE ALL FROM ENDPOINT tk1122;
-ERROR:  failed to attach non-existing endpoint tk1122 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint tk1122
 1R: RETRIEVE ALL FROM ENDPOINT tktt223344556677889900112233445566;
-ERROR:  failed to attach non-existing endpoint tktt223344556677889900112233445566 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint tktt223344556677889900112233445566
 
 -- Retrieve data.
 *R: @in_sh 'sub_endpoint_name @ENDPOINT1': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT1";

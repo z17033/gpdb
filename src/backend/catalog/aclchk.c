@@ -5028,7 +5028,10 @@ pg_proc_aclcheck(Oid proc_oid, Oid roleid, AclMode mode)
 	 * user added UDF.
 	 */
 	if ((Gp_role == GP_ROLE_RETRIEVE) && (proc_oid >= FirstNormalObjectId))
-		elog(ERROR, "Only builtin functions can be called for retrieve role");
+		ereport(
+			ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("Only builtin functions can be called for retrieve role")));
 
 	if (pg_proc_aclmask(proc_oid, roleid, mode, ACLMASK_ANY) != 0)
 		return ACLCHECK_OK;

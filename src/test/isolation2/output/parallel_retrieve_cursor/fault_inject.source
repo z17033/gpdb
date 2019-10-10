@@ -33,16 +33,16 @@ CREATE
 BEGIN
 -- should report error on seg0
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-ERROR:  Creating endpoint timeout (cdbendpoint.c:LINENO)
-ERROR:  failed to allocate endpoint (cdbendpoint.c:LINENO)
+ERROR:  creating endpoint timeout
+ERROR:  failed to allocate endpoint
 1: ROLLBACK;
 ROLLBACK
 -- test same error on another session
 3: BEGIN;
 BEGIN
 3: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-ERROR:  Creating endpoint timeout (cdbendpoint.c:LINENO)
-ERROR:  failed to allocate endpoint (cdbendpoint.c:LINENO)
+ERROR:  creating endpoint timeout
+ERROR:  failed to allocate endpoint
 3: ROLLBACK;
 ROLLBACK
 -- reset the fault injection
@@ -266,7 +266,7 @@ DECLARE
 ERROR:  canceling statement due to user request
 
 1<:  <... completed>
-ERROR:  Endpoint for 'c1' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c1' get aborted.
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 
 1R: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
@@ -274,14 +274,14 @@ ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 --------
 (0 rows)
 1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint endpoint_id2_2 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id2_2 
 
 2R: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
  status 
 --------
 (0 rows)
 2R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint endpoint_id2_3 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id2_3 
 
 1<:  <... completed>
 FAILED:  Execution failed
@@ -329,7 +329,7 @@ DECLARE
 ERROR:  canceling statement due to user request
 
 1<:  <... completed>
-ERROR:  Endpoint for 'c1' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c1' get aborted.
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 
 0R: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
@@ -337,14 +337,14 @@ ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 --------
 (0 rows)
 0R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT3";
-ERROR:  failed to attach non-existing endpoint endpoint_id3_1 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id3_1 
 
 2R: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
  status 
 --------
 (0 rows)
 2R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT3";
-ERROR:  failed to attach non-existing endpoint endpoint_id3_3 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id3_3 
 
 1<:  <... completed>
 FAILED:  Execution failed
@@ -434,7 +434,7 @@ DECLARE
 ERROR:  fault triggered, fault name:'fetch_tuples_from_endpoint' fault type:'error'
 
 1<:  <... completed>
-ERROR:  Endpoint for 'c1' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c1' get aborted.
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"  (seg0 127.0.0.1:25432 pid=31406)
 
 2R: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
@@ -442,7 +442,7 @@ ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"  (seg0 12
 --------
 (0 rows)
 2R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT4";
-ERROR:  failed to attach non-existing endpoint endpoint_id4_3 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id4_3 
 
 1<:  <... completed>
 FAILED:  Execution failed
@@ -520,7 +520,7 @@ DECLARE
 ERROR:  canceling statement due to user request
 
 1<:  <... completed>
-ERROR:  Endpoint for 'c1' get aborted. (cdbendpoint.c:LINENO)
+ERROR:  endpoint for 'c1' get aborted.
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 
 0R<:  <... completed>

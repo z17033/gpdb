@@ -500,7 +500,8 @@ get_or_create_token_on_qd()
 		if (!pg_strong_random(currentToken + sessionIdLen,
 							  ENDPOINT_TOKEN_LEN - sessionIdLen))
 		{
-			elog(ERROR, "Failed to generate a new random token.");
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("failed to generate a new random token.")));
 		}
 	}
 	return currentToken;
@@ -676,7 +677,10 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 	}
 
 	if (foundIdx == -1)
-		elog(ERROR, "failed to allocate endpoint");
+	{
+		ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						errmsg("failed to allocate endpoint")));
+	}
 
 	generate_endpoint_name(sharedEndpoints[i].name, cursorName, gp_session_id,
 						   GpIdentity.segindex);
@@ -745,7 +749,9 @@ create_and_connect_mq(TupleDesc tupleDesc, dsm_segment **mqSeg /* out */ ,
 	*mqSeg = dsm_create(tocSize, 0);
 	if (*mqSeg == NULL)
 	{
-		elog(ERROR, "failed to create shared message queue for send tuples.");
+		ereport(
+			ERROR, (errcode(ERRCODE_OUT_OF_MEMORY),
+			errmsg("failed to create shared message queue for endpoints.")));
 	}
 	dsm_pin_mapping(*mqSeg);
 
@@ -1158,8 +1164,9 @@ get_token_by_session_id(int sessionId, Oid userID, int8 *token /* out */ )
 												 HASH_FIND, NULL);
 	if (infoEntry == NULL)
 	{
-		elog(ERROR, "Token for user id: %d, session: %d doesn't exist",
-			 tag.userID, sessionId);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("token for user id: %d, session: %d doesn't exist",
+							   tag.userID, sessionId)));
 	}
 	memcpy(token, infoEntry->token, ENDPOINT_TOKEN_LEN);
 	LWLockRelease(ParallelCursorEndpointLock);
@@ -1254,12 +1261,15 @@ check_dispatch_connection(void)
 	r = pq_getbyte_if_available(&firstchar);
 	if (r < 0)
 	{
-		elog(ERROR, "unexpected EOF on query dispatcher connection");
+		ereport(ERROR,
+				(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
+				 errmsg("unexpected EOF on query dispatcher connection")));
 	}
 	else if (r > 0)
 	{
-		elog(ERROR, "query dispatcher should get nothing until QE backend "
-			 "finished processing");
+		ereport(ERROR, (errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
+						errmsg("query dispatcher should get nothing until QE "
+							   "backend finished processing")));
 	}
 	else
 	{
@@ -1306,9 +1316,10 @@ gp_operate_endpoints(PG_FUNCTION_ARGS)
 			retVal = true;
 			break;
 		default:
-			elog(ERROR,
-				 "Failed to execute gp_operate_endpoints('%c', '%s')",
-				 operation, tokenStr);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("failed to execute gp_operate_endpoints('%c', '%s')",
+							operation, tokenStr)));
 			retVal = false;
 	}
 
@@ -1436,9 +1447,9 @@ check_endpoint_finished_by_cursor_name(const char *cursorName, bool isWait)
 		{
 			LWLockRelease(ParallelCursorEndpointLock);
 			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						errmsg("The PARALLEL RETRIEVE CURSOR was created by "
+						errmsg("the PARALLEL RETRIEVE CURSOR was created by "
 							   "a different user."),
-							errhint("Using the same user as the PARALLEL "
+							errhint("using the same user as the PARALLEL "
 									"RETRIEVE CURSOR creator.")));
 		}
 		isFinished = endpointDesc->attachStatus == Status_Finished;
@@ -1448,7 +1459,8 @@ check_endpoint_finished_by_cursor_name(const char *cursorName, bool isWait)
 		LWLockRelease(ParallelCursorEndpointLock);
 		if (isWait)
 		{
-			elog(ERROR, "Endpoint doesn't exist.");
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("endpoint doesn't exist.")));
 		}
 		else
 		{
@@ -1528,7 +1540,8 @@ check_endpoint_finished_by_cursor_name(const char *cursorName, bool isWait)
 		LWLockRelease(ParallelCursorEndpointLock);
 		if (endpointDesc == NULL)
 		{
-			elog(ERROR, "Endpoint for '%s' get aborted.", cursorName);
+			ereport(ERROR, (errcode(ERRCODE_INVALID_CURSOR_STATE),
+							errmsg("endpoint for '%s' get aborted.", cursorName)));
 		}
 	}
 	return isFinished;
@@ -1654,7 +1667,8 @@ wait_for_ready_by_cursor_name(const char *cursorName, const char *tokenStr)
 		LWLockRelease(ParallelCursorEndpointLock);
 
 		if ((wr & WL_TIMEOUT) && !QueryFinishPending)
-			elog(ERROR, "Creating endpoint timeout");
+			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+							errmsg("creating endpoint timeout")));
 	}
 }
 
@@ -1728,7 +1742,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-			   errmsg("This UDF only works for PARALLEL RETRIEVE CURSOR.")));
+			   errmsg("this UDF only works for PARALLEL RETRIEVE CURSOR.")));
 		return false;
 	}
 

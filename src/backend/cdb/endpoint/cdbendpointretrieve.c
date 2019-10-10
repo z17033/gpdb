@@ -198,7 +198,9 @@ ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
 	entry = hash_search(msgQueueHTB, stmt->endpoint_name, HASH_FIND, NULL);
 	if (entry == NULL)
 	{
-		elog(ERROR, "Endpoint %s has not been attached.", stmt->endpoint_name);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("endpoint %s has not been attached.",
+							   stmt->endpoint_name)));
 	}
 
 	retrieveCount = stmt->count;
@@ -260,8 +262,9 @@ attach_endpoint(MsgQueueStatusEntry * entry)
 
 	if (EndpointCtl.GpPrceRole != PRCER_RECEIVER)
 	{
-		elog(ERROR, "%s could not attach endpoint",
-			 endpoint_role_to_string(EndpointCtl.GpPrceRole));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("%s could not attach endpoint",
+							   endpoint_role_to_string(EndpointCtl.GpPrceRole))));
 	}
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
@@ -269,15 +272,17 @@ attach_endpoint(MsgQueueStatusEntry * entry)
 
 	if (!endpointDesc)
 	{
-		elog(ERROR, "failed to attach non-existing endpoint %s", endpointName);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("failed to attach non-existing endpoint %s",
+							   endpointName)));
 	}
 
 	if (endpointDesc->userID != GetUserId())
 	{
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						errmsg("The PARALLEL RETRIEVE CURSOR was created by "
+						errmsg("the PARALLEL RETRIEVE CURSOR was created by "
 							   "a different user."),
-						errhint("Using the same user as the PARALLEL "
+						errhint("using the same user as the PARALLEL "
 								"RETRIEVE CURSOR creator to retrieve.")));
 	}
 
@@ -285,8 +290,11 @@ attach_endpoint(MsgQueueStatusEntry * entry)
 		endpointDesc->receiverPid != MyProcPid)
 	{
 		attachedPid = endpointDesc->receiverPid;
-		elog(ERROR, "Endpoint %s is already being retrieved by receiver(pid: %d)",
-			 endpointName, attachedPid);
+		ereport(
+			ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("endpoint %s is already being retrieved by receiver(pid: %d)",
+					endpointName, attachedPid)));
 	}
 
 	if (endpointDesc->receiverPid != InvalidPid &&
@@ -295,8 +303,8 @@ attach_endpoint(MsgQueueStatusEntry * entry)
 		/* already attached by other process before */
 		attachedPid = endpointDesc->receiverPid;
 		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-			   errmsg("Endpoint %s is already attached by receiver(pid: %d)",
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			   errmsg("endpoint %s is already attached by receiver(pid: %d)",
 					  endpointName, attachedPid),
 			  errdetail("An endpoint can only be attached by one retrieving "
 						"session.")));
@@ -333,7 +341,6 @@ void
 attach_receiver_mq(MsgQueueStatusEntry * entry, dsm_handle dsmHandle)
 {
 	TupleDesc	td;
-	bool		found;
 	dsm_segment *dsmSeg = NULL;
 	MemoryContext oldcontext;
 
@@ -352,9 +359,8 @@ attach_receiver_mq(MsgQueueStatusEntry * entry, dsm_handle dsmHandle)
 	dsmSeg = dsm_attach(dsmHandle);
 	if (dsmSeg == NULL)
 	{
-		hash_search(msgQueueHTB, &entry->endpointName, HASH_REMOVE, &found);
-		Assert(found);
-		elog(ERROR, "attach to shared message queue failed.");
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("attach to shared message queue failed.")));
 	}
 
 	dsm_pin_mapping(dsmSeg);
@@ -412,8 +418,9 @@ notify_sender(MsgQueueStatusEntry * entry, bool isFinished)
 	if (endpoint == NULL)
 	{
 		LWLockRelease(ParallelCursorEndpointLock);
-		elog(ERROR, "Failed to notify non-existing endpoint %s",
-			 entry->endpointName);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("failed to notify non-existing endpoint %s",
+							   entry->endpointName)));
 	}
 	if (isFinished)
 	{
@@ -567,8 +574,10 @@ detach_endpoint(MsgQueueStatusEntry * entry, bool resetPID)
 	 */
 	if (endpoint->receiverPid != MyProcPid &&
 		endpoint->receiverPid != InvalidPid)
-		elog(ERROR, "unmatched pid, expected %d but it's %d", MyProcPid,
-			 endpoint->receiverPid);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("unmatched pid, expected %d but it's %d", MyProcPid,
+						endpoint->receiverPid)));
 
 	if (resetPID)
 	{

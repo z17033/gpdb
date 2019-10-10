@@ -491,7 +491,7 @@ DECLARE
 (10 rows)
 -- a new retrieve session should report error
 3R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT3";
-ERROR:  Endpoint endpoint_id3_1 is already attached by receiver(pid: PID) (cdbendpointretrieve.c:LINENO)
+ERROR:  endpoint endpoint_id3_1 is already attached by receiver(pid: PID)
 DETAIL:  An endpoint can only be attached by one retrieving session.
 -- quit this new retrieve session
 3Rq: ... <quitting>
@@ -792,7 +792,7 @@ DECLARE
 (10 rows)
 -- 1R still bind to Test4 session, so can not retrieve from current endpoint.
 1R: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
-ERROR:  failed to attach non-existing endpoint endpoint_id5_2 (cdbendpointretrieve.c:LINENO)
+ERROR:  failed to attach non-existing endpoint endpoint_id5_2 
 -- Since seg1 retrieve session is bind to Test4 session. And Test4 session get killed. We need to restart it.
 1Rq: ... <quitting>
 1R: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";

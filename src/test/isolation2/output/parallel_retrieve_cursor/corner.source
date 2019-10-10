@@ -582,11 +582,11 @@ DECLARE
  10 
 (10 rows)
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
 -- test check and wait after finished retrieving
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
@@ -645,11 +645,11 @@ DECLARE
 ---
 (0 rows)
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
 1<:  <... completed>
  finished 
@@ -707,7 +707,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a 
 ---
@@ -779,7 +779,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a     
 -------
@@ -861,7 +861,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a 
 ---
@@ -1070,7 +1070,7 @@ DECLARE
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a | b 
 ---+---
@@ -1170,7 +1170,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a  
 ----
@@ -1320,7 +1320,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a  
 ----
@@ -1481,7 +1481,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a  
 ----
@@ -1635,7 +1635,7 @@ DECLARE
  READY  
 (1 row)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-ERROR:  failed to attach non-existing endpoint @ENDPOINT2 (cdbendpointretrieve.c:188)
+ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 
  a  
 ----
