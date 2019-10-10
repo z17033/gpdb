@@ -67,8 +67,6 @@
 
 #include "postgres.h"
 
-#include <utils/portal.h>
-
 #include "access/tupdesc.h"
 #include "access/xact.h"
 #include "cdb/cdbdisp_query.h"
@@ -83,6 +81,8 @@
 #include "storage/latch.h"
 #include "storage/procsignal.h"
 #include "utils/backend_cancel.h"
+#include "utils/builtins.h"
+#include "utils/portal.h"
 #include "utils/elog.h"
 #ifdef FAULT_INJECTOR
 #include "utils/faultinjector.h"
@@ -412,8 +412,8 @@ call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
 
 		initStringInfo(&cmdStr);
 
-		appendStringInfo(&cmdStr, "select pg_catalog.__gp_operate_endpoints_token('%c', '%s', '%s')", operator,
-						 tokenStr, cursorName);
+		appendStringInfo(&cmdStr, "select \"pg_catalog\".\"__gp_operate_endpoints_token\"('%c', '%s', %s);", operator,
+						 tokenStr, TextDatumGetCString(DirectFunctionCall1(quote_literal, CStringGetTextDatum(cursorName))));
 		if (endPointExecPosition == ENDPOINT_ON_ALL_QE)
 		{
 			/* Push token to all segments */
