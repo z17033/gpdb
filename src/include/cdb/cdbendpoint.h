@@ -43,18 +43,18 @@
 /*
  * Roles that used in PARALLEL RETRIEVE CURSOR execution.
  *
- * EPR_SENDER(endpoint) behaviors like a store, the client could retrieve
- * results from it. The EPR_SENDER could be on master or some/all segments,
- * depending on the query of the PARALLEL RETRIEVE CURSOR.
+ * PARALLEL_RETRIEVE_SENDER behaves like a store, the client could retrieve
+ * results from it. The PARALLEL_RETRIEVE_SENDER could be on master or
+ * some/all segments, depending on the query of the PARALLEL RETRIEVE CURSOR.
  *
- * EPR_RECEIVER(retrieve role), connect to each EPR_SENDER(endpoint) via "retrieve"
- * mode to retrieve results.
+ * PARALLEL_RETRIEVE_RECEIVER connect to each PARALLEL_RETRIEVE_SENDER via
+ * "retrieve" mode to retrieve results.
  */
 enum ParallelRetrCursorExecRole
 {
-	PRCER_SENDER = 1,
-	PRCER_RECEIVER,
-	PRCER_NONE
+	PARALLEL_RETRIEVE_SENDER = 1,
+	PARALLEL_RETRIEVE_RECEIVER,
+	PARALLEL_RETRIEVE_NONE
 };
 
 /*

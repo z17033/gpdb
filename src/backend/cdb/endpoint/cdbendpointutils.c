@@ -64,7 +64,7 @@ static char *status_enum_to_string(enum AttachStatus status);
 static enum AttachStatus status_string_to_enum(const char *status);
 
 /* Endpoint control information for current session. */
-struct EndpointControl EndpointCtl = {PRCER_NONE, InvalidSession};
+struct EndpointControl EndpointCtl = {PARALLEL_RETRIEVE_NONE, InvalidSession};
 
 /*
  * Convert the string tk0123456789 to int 0123456789 and save it into
@@ -114,7 +114,7 @@ print_token(const int8 *token)
 void
 SetParallelCursorExecRole(enum ParallelRetrCursorExecRole role)
 {
-	if (EndpointCtl.GpPrceRole != PRCER_NONE && EndpointCtl.GpPrceRole != role)
+	if (EndpointCtl.GpPrceRole != PARALLEL_RETRIEVE_NONE && EndpointCtl.GpPrceRole != role)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("endpoint role %s is already set to %s",
 							   endpoint_role_to_string(EndpointCtl.GpPrceRole),
@@ -135,7 +135,7 @@ ClearParallelCursorExecRole(void)
 	elog(DEBUG3, "CDB_ENDPOINT: unset endpoint role %s",
 		 endpoint_role_to_string(EndpointCtl.GpPrceRole));
 
-	EndpointCtl.GpPrceRole = PRCER_NONE;
+	EndpointCtl.GpPrceRole = PARALLEL_RETRIEVE_NONE;
 }
 
 /*
@@ -152,13 +152,13 @@ endpoint_role_to_string(enum ParallelRetrCursorExecRole role)
 {
 	switch (role)
 	{
-		case PRCER_SENDER:
+		case PARALLEL_RETRIEVE_SENDER:
 			return "[END POINT SENDER]";
 
-		case PRCER_RECEIVER:
+		case PARALLEL_RETRIEVE_RECEIVER:
 			return "[END POINT RECEIVER]";
 
-		case PRCER_NONE:
+		case PARALLEL_RETRIEVE_NONE:
 			return "[END POINT NONE]";
 
 		default:

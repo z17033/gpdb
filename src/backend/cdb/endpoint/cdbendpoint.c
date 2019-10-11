@@ -525,7 +525,7 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
 
 	Assert(!activeSharedEndpoint);
 	Assert(!activeDsmSeg);
-	Assert(EndpointCtl.GpPrceRole == PRCER_SENDER);
+	Assert(EndpointCtl.GpPrceRole == PARALLEL_RETRIEVE_SENDER);
 
 	/* Register callback to deal with proc exit. */
 	register_endpoint_callbacks();

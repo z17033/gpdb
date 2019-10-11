@@ -2148,7 +2148,7 @@ UtilityTupleDescriptor(Node *parsetree)
 				if (Gp_role != GP_ROLE_RETRIEVE)
 					elog(ERROR, "RETRIEVE command can only run in retrieve mode");
 
-                SetParallelCursorExecRole(PRCER_RECEIVER);
+                SetParallelCursorExecRole(PARALLEL_RETRIEVE_RECEIVER);
 
 				return CreateTupleDescCopy(GetRetrieveStmtTupleDesc(n));
 			}
