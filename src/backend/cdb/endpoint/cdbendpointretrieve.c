@@ -240,7 +240,7 @@ ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
 	}
 
 	detach_endpoint(entry, false);
-	ClearParallelCursorExecRole();
+	ClearParallelRtrvCursorExecRole();
 }
 
 /*
@@ -260,11 +260,11 @@ attach_endpoint(MsgQueueStatusEntry * entry)
 	Assert(entry);
 	Assert(entry->endpointName);
 
-	if (EndpointCtl.GpPrceRole != PARALLEL_RETRIEVE_RECEIVER)
+	if (EndpointCtl.GpParallelRtrvRole != PARALLEL_RETRIEVE_RECEIVER)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("%s could not attach endpoint",
-							   endpoint_role_to_string(EndpointCtl.GpPrceRole))));
+							   endpoint_role_to_string(EndpointCtl.GpParallelRtrvRole))));
 	}
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
@@ -551,7 +551,7 @@ detach_endpoint(MsgQueueStatusEntry * entry, bool resetPID)
 {
 	EndpointDesc *endpoint = NULL;
 
-	Assert(EndpointCtl.GpPrceRole == PARALLEL_RETRIEVE_RECEIVER);
+	Assert(EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_RECEIVER);
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	endpoint = find_endpoint(entry->endpointName, EndpointCtl.sessionID);
@@ -612,7 +612,7 @@ retrieve_cancel_action(const char *endpointName, char *msg)
 	 * If current role is not receiver, the retrieve must already finished
 	 * success or get cleaned before.
 	 */
-	if (EndpointCtl.GpPrceRole != PARALLEL_RETRIEVE_RECEIVER)
+	if (EndpointCtl.GpParallelRtrvRole != PARALLEL_RETRIEVE_RECEIVER)
 		elog(
 			 DEBUG3,
 		"CDB_ENDPOINT: retrieve_cancel_action current role is not receiver.");
@@ -705,7 +705,7 @@ retrieve_exit_callback(int code, Datum arg)
 		}
 	}
 	msgQueueHTB = NULL;
-	ClearParallelCursorExecRole();
+	ClearParallelRtrvCursorExecRole();
 }
 
 /*
@@ -723,7 +723,7 @@ retrieve_xact_abort_callback(XactEvent ev, void *vp)
 	if (ev == XACT_EVENT_ABORT)
 	{
 		elog(DEBUG3, "CDB_ENDPOINT: retrieve xact abort callback");
-		if (EndpointCtl.GpPrceRole == PARALLEL_RETRIEVE_RECEIVER &&
+		if (EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_RECEIVER &&
 			EndpointCtl.sessionID != InvalidSession && currentMQEntry)
 		{
 			if (currentMQEntry->retrieveStatus != RETRIEVE_STATUS_FINISH)
@@ -731,7 +731,7 @@ retrieve_xact_abort_callback(XactEvent ev, void *vp)
 									   "Endpoint retrieve statement aborted");
 			detach_endpoint(currentMQEntry, true);
 		}
-		ClearParallelCursorExecRole();
+		ClearParallelRtrvCursorExecRole();
 	}
 }
 

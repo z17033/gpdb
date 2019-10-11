@@ -1318,7 +1318,7 @@ exec_mpp_query(const char *query_string,
 						  NULL);
 
 		if ((commandType == CMD_SELECT) && (currentSliceId == 0) && forParallelCursor)
-			SetParallelCursorExecRole(PARALLEL_RETRIEVE_SENDER);
+			SetParallelRtrvCursorExecRole(PARALLEL_RETRIEVE_SENDER);
 
 		/*
 		 * Start the portal.

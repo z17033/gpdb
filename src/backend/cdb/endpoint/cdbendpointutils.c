@@ -112,43 +112,43 @@ print_token(const int8 *token)
  * func will be called 2 times.
  */
 void
-SetParallelCursorExecRole(enum ParallelRetrCursorExecRole role)
+SetParallelRtrvCursorExecRole(enum ParallelRtrvCursorExecRole role)
 {
-	if (EndpointCtl.GpPrceRole != PARALLEL_RETRIEVE_NONE && EndpointCtl.GpPrceRole != role)
+	if (EndpointCtl.GpParallelRtrvRole != PARALLEL_RETRIEVE_NONE && EndpointCtl.GpParallelRtrvRole != role)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("endpoint role %s is already set to %s",
-							   endpoint_role_to_string(EndpointCtl.GpPrceRole),
+							   endpoint_role_to_string(EndpointCtl.GpParallelRtrvRole),
 							   endpoint_role_to_string(role))));
 
 	elog(DEBUG3, "CDB_ENDPOINT: set endpoint role to %s",
 		 endpoint_role_to_string(role));
 
-	EndpointCtl.GpPrceRole = role;
+	EndpointCtl.GpParallelRtrvRole = role;
 }
 
 /*
  * Clear the role of endpoint
  */
 void
-ClearParallelCursorExecRole(void)
+ClearParallelRtrvCursorExecRole(void)
 {
 	elog(DEBUG3, "CDB_ENDPOINT: unset endpoint role %s",
-		 endpoint_role_to_string(EndpointCtl.GpPrceRole));
+		 endpoint_role_to_string(EndpointCtl.GpParallelRtrvRole));
 
-	EndpointCtl.GpPrceRole = PARALLEL_RETRIEVE_NONE;
+	EndpointCtl.GpParallelRtrvRole = PARALLEL_RETRIEVE_NONE;
 }
 
 /*
  * Return the value of static variable GpPrceRole
  */
-enum ParallelRetrCursorExecRole
-GetParallelCursorExecRole(void)
+enum ParallelRtrvCursorExecRole
+GetParallelRtrvCursorExecRole(void)
 {
-	return EndpointCtl.GpPrceRole;
+	return EndpointCtl.GpParallelRtrvRole;
 }
 
 const char *
-endpoint_role_to_string(enum ParallelRetrCursorExecRole role)
+endpoint_role_to_string(enum ParallelRtrvCursorExecRole role)
 {
 	switch (role)
 	{

@@ -50,7 +50,7 @@
  * PARALLEL_RETRIEVE_RECEIVER connect to each PARALLEL_RETRIEVE_SENDER via
  * "retrieve" mode to retrieve results.
  */
-enum ParallelRetrCursorExecRole
+enum ParallelRtrvCursorExecRole
 {
 	PARALLEL_RETRIEVE_SENDER = 1,
 	PARALLEL_RETRIEVE_RECEIVER,
@@ -106,9 +106,9 @@ extern void ExecRetrieveStmt(const RetrieveStmt *stmt, DestReceiver *dest);
 
 /* cdbendpointutils.c */
 /* Utility functions */
-extern void SetParallelCursorExecRole(enum ParallelRetrCursorExecRole role);
-extern void ClearParallelCursorExecRole(void);
-extern enum ParallelRetrCursorExecRole GetParallelCursorExecRole(void);
+extern void SetParallelRtrvCursorExecRole(enum ParallelRtrvCursorExecRole role);
+extern void ClearParallelRtrvCursorExecRole(void);
+extern enum ParallelRtrvCursorExecRole GetParallelRtrvCursorExecRole(void);
 
 /* UDFs for endpoints info*/
 extern Datum gp_endpoints_info(PG_FUNCTION_ARGS);

@@ -525,7 +525,7 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
 
 	Assert(!activeSharedEndpoint);
 	Assert(!activeDsmSeg);
-	Assert(EndpointCtl.GpPrceRole == PARALLEL_RETRIEVE_SENDER);
+	Assert(EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_SENDER);
 
 	/* Register callback to deal with proc exit. */
 	register_endpoint_callbacks();
@@ -607,7 +607,7 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	activeSharedEndpoint = NULL;
 	detach_mq(activeDsmSeg);
 	activeDsmSeg = NULL;
-	ClearParallelCursorExecRole();
+	ClearParallelRtrvCursorExecRole();
 }
 
 /*
@@ -987,7 +987,7 @@ endpoint_abort(void)
 		detach_mq(activeDsmSeg);
 		activeDsmSeg = NULL;
 	}
-	ClearParallelCursorExecRole();
+	ClearParallelRtrvCursorExecRole();
 }
 
 /*

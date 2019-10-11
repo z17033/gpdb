@@ -993,7 +993,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 			 * For the scenario: endpoint on QE, the query plan is changed,
 			 * the root slice also exists on QE.
 			 */
-			if (GetParallelCursorExecRole() == PARALLEL_RETRIEVE_SENDER)
+			if (GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER)
 			{
 				endpointDest = CreateTQDestReceiverForEndpoint(
 					queryDesc->tupDesc, queryDesc->ddesc->parallelCursorName);
@@ -1010,10 +1010,10 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 			ExecutePlan(estate,
 						queryDesc->planstate,
 						operation,
-						(GetParallelCursorExecRole() == PARALLEL_RETRIEVE_SENDER ? true : sendTuples),
+						(GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER ? true : sendTuples),
 						count,
 						direction,
-						(GetParallelCursorExecRole() == PARALLEL_RETRIEVE_SENDER? endpointDest : dest));
+						(GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER? endpointDest : dest));
 		}
 		else
 		{
@@ -1078,7 +1078,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	/*
 	 * shutdown tuple receiver, if we started it
 	 */
-	if (GetParallelCursorExecRole() == PARALLEL_RETRIEVE_SENDER
+	if (GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER
 			&& endpointDest != NULL)
 	{
 		DestroyTQDestReceiverForEndpoint(endpointDest);
