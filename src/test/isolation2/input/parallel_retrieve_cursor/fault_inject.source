@@ -31,7 +31,7 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: @out_sh 'parse_endpoint 1 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub @TOKEN1 $TOKEN1' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN1' or endpointname='DUMMYENDPOINTNAME';
+*U: @in_sh 'sub @TOKEN1 $TOKEN1' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN1' or endpointname='DUMMYENDPOINTNAME';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT1': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT1";
 
 1<:
@@ -39,7 +39,7 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 -- check no endpoint info
 1: SELECT token,status FROM gp_endpoints_info(true) WHERE cursorname='c1' or endpointname='DUMMYENDPOINTNAME';
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*R: @in_sh 'sub @TOKEN1 $TOKEN1' : SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN1' or endpointname='DUMMYENDPOINTNAME';
+*U: @in_sh 'sub @TOKEN1 $TOKEN1' : SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN1' or endpointname='DUMMYENDPOINTNAME';
 
 1: ROLLBACK;
 
@@ -52,15 +52,15 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: @out_sh 'parse_endpoint 2 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-0R: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+0U: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
 0R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
 
-1R: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+1U: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
 1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
-2R: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+2U: @in_sh 'sub @TOKEN2 $TOKEN2' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
 2R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -77,15 +77,15 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: @out_sh 'parse_endpoint 3 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-1R: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
+1U: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
 1R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT3";
 
 1<:
 
-0R: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
+0U: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
 0R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT3";
 
-2R: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
+2U: @in_sh 'sub @TOKEN3 $TOKEN3' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
 2R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT3";
 
 1<:
@@ -101,15 +101,15 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: @out_sh 'parse_endpoint 4 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-1R: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
+1U: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
 1R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT4";
 
-0R: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
+0U: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
 0R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT4";
 
 1<:
 
-2R: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
+2U: @in_sh 'sub @TOKEN4 $TOKEN4' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
 2R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT4";
 
 1<:
@@ -129,13 +129,13 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: @out_sh 'parse_endpoint 5 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-0R: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
+0U: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
 0R&: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
 
-2R: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
+2U: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
 2R&: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
 
-1R: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
+1U: @in_sh 'sub @TOKEN5 $TOKEN5' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
 1R: @in_sh 'sub_endpoint_name @ENDPOINT5': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
 
 1<:
@@ -158,13 +158,13 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
 1: @out_sh 'parse_endpoint 7 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 
-0R: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+0U: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
 0R&: @in_sh 'sub_endpoint_name @ENDPOINT7': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT7";
 
-1R: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+1U: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
 1R&: @in_sh 'sub_endpoint_name @ENDPOINT7': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT7";
 
-2R: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+2U: @in_sh 'sub @TOKEN6 $TOKEN7' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
 2R&: @in_sh 'sub_endpoint_name @ENDPOINT7': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT7";
 
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');

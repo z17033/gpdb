@@ -1452,17 +1452,6 @@ ExecCheckRTEPerms(RangeTblEntry *rte)
 
 	relOid = rte->relid;
 
-	/* Only gp_endpoints view can be allowed by retrieve role */
-	if (Gp_role == GP_ROLE_RETRIEVE)
-	{
-		if ((rte->relid != 11468) || (rte->relkind != 'v'))
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("Only gp_endpoints view can be accessed by retrieve role")));
-		}
-	}
-
 	/*
 	 * userid to check as: current user unless we have a setuid indication.
 	 *

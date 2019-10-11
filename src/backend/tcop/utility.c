@@ -429,17 +429,6 @@ standard_ProcessUtility(Node *parsetree,
 	if (completionTag)
 		completionTag[0] = '\0';
 
-	/* Only allow some statements for retrieve role */
-	if (Gp_role == GP_ROLE_RETRIEVE &&
-			(nodeTag(parsetree) != T_VariableSetStmt) &&
-			(nodeTag(parsetree) != T_VariableShowStmt) &&
-			(nodeTag(parsetree) != T_RetrieveStmt))
-	{
-		ereport(ERROR,
-		        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			        errmsg("Only allow RETRIEVE, SELECT and GUC statements for retrieve role")));
-	}
-
 	switch (nodeTag(parsetree))
 	{
 			/*
@@ -2094,17 +2083,6 @@ UtilityReturnsTuples(Node *parsetree)
 TupleDesc
 UtilityTupleDescriptor(Node *parsetree)
 {
-	/* Only allow some statements for retrieve role */
-	if ((Gp_role == GP_ROLE_RETRIEVE) &&
-			(nodeTag(parsetree) != T_RetrieveStmt) &&
-			(nodeTag(parsetree) != T_VariableSetStmt) &&
-			(nodeTag(parsetree) != T_VariableShowStmt))
-	{
-		ereport(ERROR,
-		        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			        errmsg("Only allow RETRIEVE, SELECT and GUC statements for retrieve role")));
-	}
-
 	switch (nodeTag(parsetree))
 	{
 		case T_FetchStmt:

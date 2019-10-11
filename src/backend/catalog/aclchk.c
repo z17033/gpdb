@@ -5015,24 +5015,6 @@ pg_database_aclcheck(Oid db_oid, Oid roleid, AclMode mode)
 AclResult
 pg_proc_aclcheck(Oid proc_oid, Oid roleid, AclMode mode)
 {
-	/*
-	 * In retrieve mode connection, user may need to lookup endpoint details
-	 * info during retrieving. The lookup statement like:
-	 * > SELECT * FROM GP_ENDPOINTS_STATUS_INFO() where token='tk01065229061552603877';
-	 *
-	 * So not only UDF GP_ENDPOINTS_STATUS_INFO() but also the operator '='
-	 * for string (which will call some built-in function) is needed.
-	 *
-	 * However thinking that some UDF user-added may have some dangerous
-	 * operation for other users to call, so we just not allowed to call all
-	 * user added UDF.
-	 */
-	if ((Gp_role == GP_ROLE_RETRIEVE) && (proc_oid >= FirstNormalObjectId))
-		ereport(
-			ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 errmsg("Only builtin functions can be called for retrieve role")));
-
 	if (pg_proc_aclmask(proc_oid, roleid, mode, ACLMASK_ANY) != 0)
 		return ACLCHECK_OK;
 	else

@@ -27,7 +27,7 @@ insert into t1 select generate_series(1,100);
 
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
 -- verify endpoints on seg0 for c2 has been finishied
-0R: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 -- quit the first retrieve session
 0Rq:
 
@@ -44,7 +44,7 @@ insert into t1 select generate_series(1,100);
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
 
 -- verify endpoints for c1 is gone
-3R: SELECT cursorname, senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+3U: SELECT cursorname, senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 
 -- Now check on c1 will trigger the error, all endpoints should be aborted since the transaction
 -- will be terminated.

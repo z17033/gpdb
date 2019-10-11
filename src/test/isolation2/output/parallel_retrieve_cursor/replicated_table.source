@@ -31,20 +31,23 @@ DECLARE
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 2&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 3&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c3');  <waiting ...>
-*R: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
+*U: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
+ status 
+--------
+(0 rows)
 
-
-#0retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 
  status 
 --------
  READY  
 (1 row)
 
-#2retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT1': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT1";
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 
@@ -122,20 +125,23 @@ DECLARE
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 2&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 3&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c3');  <waiting ...>
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+ status 
+--------
+(0 rows)
 
-
-#0retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 
  status 
 --------
  READY  
 (1 row)
 
-#2retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT2";
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 
@@ -213,20 +219,23 @@ DECLARE
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 2&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 3&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c3');  <waiting ...>
-*R: @in_sh 'sub_endpoint_name @ENDPOINT3': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT3';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
+*U: @in_sh 'sub_endpoint_name @ENDPOINT3': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT3';
+ status 
+--------
+(0 rows)
 
-
-#0retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 
  status 
 --------
  READY  
 (1 row)
 
-#2retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT3': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT3";
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 
@@ -304,20 +313,23 @@ DECLARE
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 2&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 3&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c3');  <waiting ...>
-*R: @in_sh 'sub_endpoint_name @ENDPOINT4': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT4';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
+*U: @in_sh 'sub_endpoint_name @ENDPOINT4': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT4';
+ status 
+--------
+(0 rows)
 
-
-#0retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 
  status 
 --------
  READY  
 (1 row)
 
-#2retrieve> FATAL:  Retrieve auth token is invalid
-
+ status 
+--------
+(0 rows)
 *R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT4";
 #-1retrieve> FATAL:  Retrieve auth token is invalid
 

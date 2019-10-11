@@ -42,21 +42,21 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-0R: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
+0U: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
  status 
 --------
  READY  
 (1 row)
 0R&: @in_sh 'sub_endpoint_name @ENDPOINT6': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT6";  <waiting ...>
 
-2R: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
+2U: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
  status 
 --------
  READY  
 (1 row)
 2R&: @in_sh 'sub_endpoint_name @ENDPOINT6': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT6";  <waiting ...>
 
-1R: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
+1U: @in_sh 'sub @TOKEN6 $TOKEN6' : SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
  status 
 --------
  READY  

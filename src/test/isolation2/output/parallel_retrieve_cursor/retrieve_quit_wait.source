@@ -220,7 +220,7 @@ DECLARE
  t        
 (1 row)
 
-0R: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
  cursorname | ?column? | ?column? | status 
 ------------+----------+----------+--------
  c1         | t        | t        | READY  
@@ -455,7 +455,7 @@ DECLARE
 (25 rows)
 -- skip TOKEN3 in this session
 
-0R: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
  cursorname | ?column? | ?column? | status 
 ------------+----------+----------+--------
  c4         | t        | t        | READY  

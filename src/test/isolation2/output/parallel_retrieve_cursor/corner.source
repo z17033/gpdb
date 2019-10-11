@@ -49,9 +49,10 @@ CLOSE
 -------+--------
 (0 rows)
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*R: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
-
+*U: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
+ status 
+--------
+(0 rows)
 
  status 
 --------
@@ -89,9 +90,10 @@ CLOSE
 -------+--------
 (0 rows)
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*R: @in_sh 'sub_endpoint_name @ENDPOINT11': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT11';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
-
+*U: @in_sh 'sub_endpoint_name @ENDPOINT11': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT11';
+ status 
+--------
+(0 rows)
 
  status 
 --------
@@ -205,9 +207,10 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
-
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+ status 
+--------
+(0 rows)
 
  status 
 --------
@@ -391,9 +394,10 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
-#-1retrieve> FATAL:  Retrieve auth token is invalid
-
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+ status 
+--------
+(0 rows)
 
  status 
 --------
@@ -550,7 +554,7 @@ DECLARE
  endpoint_id2_1 | token_id | host_id | port_id | READY
 (1 row)
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -623,7 +627,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -687,7 +691,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -759,7 +763,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -841,7 +845,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -911,7 +915,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -956,7 +960,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -994,7 +998,7 @@ DECLARE
  endpoint_id2_1 | token_id | host_id | port_id | READY
 (1 row)
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -1033,7 +1037,7 @@ DECLARE
 (1 row)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
  READY  
@@ -1150,7 +1154,7 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -1300,7 +1304,7 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -1461,7 +1465,7 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)
@@ -1615,7 +1619,7 @@ DECLARE
 (3 rows)
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');  <waiting ...>
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
  status 
 --------
 (0 rows)

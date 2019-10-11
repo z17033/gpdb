@@ -35,7 +35,7 @@ finish_conn_nicely(PGconn *master_conn, PGconn *endpoint_conns[], size_t endpoin
 }
 
 static void
-check_prepare_conn(PGconn *conn, const char *dbName)
+check_prepare_conn(PGconn *conn, const char *dbName, int conn_idx)
 {
 	PGresult   *res;
 
@@ -47,16 +47,19 @@ check_prepare_conn(PGconn *conn, const char *dbName)
 		exit(1);
 	}
 
-	/* Set always-secure search path, so malicous users can't take control. */
-	res = PQexec(conn,
-				 "SELECT pg_catalog.set_config('search_path', '', false)");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	if(conn_idx == MASTER_CONNECT_INDEX)
 	{
-		fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
+		/* Set always-secure search path, so malicous users can't take control. */
+		res = PQexec(conn,
+					"SELECT pg_catalog.set_config('search_path', '', false)");
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
+			PQclear(res);
+			exit(1);
+		}
 		PQclear(res);
-		exit(1);
 	}
-	PQclear(res);
 }
 /* execute sql and check it is a command without result set returned */
 static int
@@ -180,7 +183,7 @@ main(int argc, char **argv)
 
 	/* make a connection to the database */
 	master_conn = PQsetdb(pghost, pgport, pgoptions, pgtty, dbName);
-	check_prepare_conn(master_conn, dbName);
+	check_prepare_conn(master_conn, dbName, MASTER_CONNECT_INDEX);
 
 	/* do some preparation for test */
 	if (exec_sql_without_resultset(master_conn, "DROP TABLE IF EXISTS public.tab_parallel_cursor;", MASTER_CONNECT_INDEX) != 0)
@@ -247,7 +250,7 @@ main(int argc, char **argv)
 		endpoint_conns[i] = PQsetdbLogin(host, port, pgoptions_retrieve_mode,
 										 pgtty, dbName,
 										 dbUser, token);
-		check_prepare_conn(endpoint_conns[i], dbName);
+		check_prepare_conn(endpoint_conns[i], dbName, i);
 	}
 	PQclear(res1);
 

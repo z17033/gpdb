@@ -16,7 +16,7 @@ SELECT make_record(x) FROM t1;
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT1': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT1";
 
 1<:

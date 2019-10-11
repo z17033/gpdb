@@ -27,7 +27,7 @@ insert into t1 select generate_series(1,100);
 -- Retrieving on C2 finished.
 1<:
 
-0R: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 -- quit the retrieve session
 0Rq:
 -- Now the interrupt is checked using WaitLatch() for time: WAIT_NORMAL_TIMEOUT,
@@ -63,7 +63,7 @@ insert into t1 select generate_series(1,100);
 *R: @in_sh 'sub_endpoint_name @ENDPOINT5' : RETRIEVE ALL FROM ENDPOINT "@ENDPOINT5";
 -- skip TOKEN3 in this session
 
-0R: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
+0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
 0Rq:
 
 -- Since retrieving session abort, waiting should be interrupted.

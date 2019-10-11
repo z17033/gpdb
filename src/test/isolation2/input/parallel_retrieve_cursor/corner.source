@@ -23,7 +23,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 -- check no endpoint info
 1: SELECT token,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*R: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT1': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT1';
 
 -- error out for closed cursor
 1: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
@@ -37,7 +37,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 -- check no endpoint info
 1: SELECT token,status FROM gp_endpoints_info(true) WHERE cursorname='c11';
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*R: @in_sh 'sub_endpoint_name @ENDPOINT11': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT11';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT11': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT11';
 
 -- error out for closed cursor
 1: SELECT * FROM gp_wait_parallel_retrieve_cursor('c11');
@@ -90,7 +90,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -115,7 +115,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c2';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -128,7 +128,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: DECLARE c2 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1 ORDER BY a LIMIT 10;
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c2';
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 -- test check and wait after finished retrieving
@@ -145,7 +145,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -161,7 +161,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -177,7 +177,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -193,7 +193,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c2');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -209,7 +209,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -225,7 +225,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 -1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<: 
@@ -238,7 +238,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT AVG(a) FROM t1;
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 -1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
@@ -252,7 +252,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
--1R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+-1U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 -1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -289,7 +289,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -298,7 +298,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
@@ -311,7 +311,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 0Rq:
@@ -324,7 +324,7 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: @out_sh 'parse_endpoint 2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
-*R: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
+*U: @in_sh 'sub_endpoint_name @ENDPOINT2': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT2';
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 
 1<:
