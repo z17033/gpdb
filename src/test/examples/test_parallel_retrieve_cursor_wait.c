@@ -152,7 +152,7 @@ main(int argc, char **argv)
 	PGconn	   *master_conn,
 			  **endpoint_conns = NULL;
 	size_t		endpoint_conns_num = 0;
-	char	   *token = NULL,
+	char	   **tokens = NULL,
 			   **endpoint_names = NULL;
 
 	PGresult   *res1;
@@ -225,6 +225,7 @@ main(int argc, char **argv)
 	}
 
 	endpoint_conns = malloc(ntup * sizeof(PGconn *));
+	tokens = malloc(ntup * sizeof(char **));
 	endpoint_names = malloc(ntup * sizeof(char *));
 	endpoint_conns_num = ntup;
 
@@ -237,19 +238,12 @@ main(int argc, char **argv)
 		char* host = PQgetvalue(res1, i, 0);
 		char* port = PQgetvalue(res1, i, 1);
 
-		if (i == 0)
-		{
-			/*
-			 * currently all endpoints of one PARALLEL RETRIEVE CURSOR has the same
-			 * token, so just set it at the first time
-			 */
-			token = strdup(PQgetvalue(res1, i, 2));
-		}
+		tokens[i] = strdup(PQgetvalue(res1, i, 2));
 		endpoint_names[i] = strdup(PQgetvalue(res1, i, 3));
 
 		endpoint_conns[i] = PQsetdbLogin(host, port, pgoptions_retrieve_mode,
 										 pgtty, dbName,
-										 dbUser, token);
+										 dbUser, tokens[i]);
 		check_prepare_conn(endpoint_conns[i], dbName, i);
 	}
 	PQclear(res1);
@@ -321,8 +315,14 @@ LABEL_FINISH:
 	/* close the connections to the database and cleanup */
 	finish_conn_nicely(master_conn, endpoint_conns, endpoint_conns_num);
 
-	if (token)
-		free(token);
+	if (tokens)
+	{
+		for (int i=0; i< endpoint_conns_num; i++)
+			if(tokens[i])
+				free(tokens[i]);
+
+		free(tokens);
+	}
 
 	if (endpoint_names)
 	{
