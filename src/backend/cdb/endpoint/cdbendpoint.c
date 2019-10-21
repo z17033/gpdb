@@ -130,19 +130,6 @@ typedef struct SessionInfoEntry
 {
 	SessionTokenTag tag;
 
-	/*
-	 * We implement two UDFs for below purpose:
-	 *
-	 * 1: During 'DECLARE PARALLEL RETRIEVE CURSOR',
-	 * dispatch a UDF to wait until all endpoints are ready.
-	 * 2: After 'DECLARE PARALLEL RETRIEVE CURSOR', user can execute
-	 * 'gp_wait_parallel_retrieve_cursor' to wait until all endpoints
-	 * finished. (For track status purpose) So we create the latch and
-	 * endpoint set latch at right moment.
-	 *
-	 * cursorName is used to track which 'PARALLEL RETRIEVE CURSOR' to set
-	 * latch.
-	 */
 	Latch		udfCheckLatch;
 	char		cursorName[NAMEDATALEN];
 
@@ -180,7 +167,7 @@ static void create_and_connect_mq(TupleDesc tupleDesc,
 					  dsm_segment **mqSeg /* out */ ,
 					  shm_mq_handle **mqHandle /* out */ );
 static void detach_mq(dsm_segment *dsmSeg);
-static void declare_parallel_retrieve_ready(const char *cursorName);
+static void init_session_info_entry();
 static void wait_receiver(void);
 static void unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc);
 static void signal_receiver_abort(pid_t receiverPid,
@@ -200,12 +187,9 @@ static EndpointDesc *find_endpoint_by_cursor_name(const char *name,
 static void check_dispatch_connection(void);
 
 /* Endpoints internal operation UDF's helper function */
-static void register_session_info_callback(void);
 static void session_info_clean_callback(XactEvent ev, void *vp);
 static bool check_endpoint_finished_by_cursor_name(const char *cursorName,
 									   bool isWait);
-static void wait_for_ready_by_cursor_name(const char *cursorName,
-							  const char *tokenStr);
 static bool check_parallel_retrieve_cursor(const char *cursorName, bool isWait);
 static bool check_parallel_cursor_errors(QueryDesc *queryDesc);
 
@@ -364,10 +348,25 @@ ChooseEndpointContentIDForParallelCursor(const struct Plan *planTree,
 	return cids;
 }
 
+/*
+ * WaitEndpointReady - wait until the PARALLEL RETRIEVE CURSOR ready for retrieve
+ *
+ * On QD, after dispatch the plan to QEs, QD will wait for QEs' ENDPOINT_READY
+ * acknowledge NOTIFY message. Then, we know all endpoints are ready for retrieve.
+ */
 void
-WaitEndpointReady(const struct Plan *planTree, const char *cursorName)
+WaitEndpointReady(CdbDispatcherState* ds)
 {
-	call_endpoint_udf_on_qd(planTree, cursorName, 'r');
+	ErrorData *qeError = NULL;
+
+	cdbdisp_waitDispatchAckMessage(ds, ENDPOINT_READY);
+	if(cdbdisp_checkResultsErrcode(ds->primaryResults))
+	{
+		cdbdisp_getDispatchResults(ds, &qeError);
+		Assert(qeError);
+		cdbdisp_destroyDispatcherState(ds);
+		ReThrowError(qeError);
+	}
 }
 
 /*
@@ -537,15 +536,17 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
 	create_and_connect_mq(tupleDesc, &activeDsmSeg, &shmMqHandle);
 
 	/*
-	 * Alloc endpoint and set it as the active one for sender. Once the
-	 * endpoint has been created in shared memory, write gang can return from
-	 * waiting for declare UDF and the message queue is ready to retrieve.
+	 * Alloc endpoint and set it as the active one for sender.
 	 */
 	activeSharedEndpoint =
 		alloc_endpoint(cursorName, dsm_segment_handle(activeDsmSeg));
+	init_session_info_entry();
 
-	/* Unblock the latch to finish declare statement. */
-	declare_parallel_retrieve_ready(cursorName);
+	/*
+	 * Once the endpoint has been created in shared memory, send acknowledge
+	 * message to QD so DECLARE PARALLEL RETRIEVE CURSOR statement can finish.
+	 */
+	cdb_sendAckMessageToQD(ENDPOINT_READY);
 	return CreateTupleQueueDestReceiver(shmMqHandle);
 }
 
@@ -774,45 +775,59 @@ create_and_connect_mq(TupleDesc tupleDesc, dsm_segment **mqSeg /* out */ ,
 }
 
 /*
- * declare_parallel_retrieve_ready
+ * init_session_info_entry.
  *
- * After endpoint is ready for retrieve, tell WaitEndpointReady
- * to finish wait and then DECLARE statement could finish.
+ * Create/reuse SessionInfoEntry for current session in shared memory.
+ * SessionInfoEntry is used for retrieve auth.
  */
 void
-declare_parallel_retrieve_ready(const char *cursorName)
+init_session_info_entry()
 {
-	SessionInfoEntry *infoEntry = NULL;
-	Latch	   *latch = NULL;
-	SessionTokenTag tag;
+	SessionInfoEntry	*infoEntry = NULL;
+	bool				 found = false;
+	SessionTokenTag		 tag;
+	const int8			*token = NULL;
+	char				*tokenStr;
 
-	tag.sessionID = gp_session_id;
-	tag.userID = GetUserId();
+	tag.sessionID	= gp_session_id;
+	tag.userID		= GetUserId();
 
-	LWLockAcquire(ParallelCursorEndpointLock, LW_SHARED);
+	/* track current session id for session_info_clean_callback  */
+	EndpointCtl.sessionID = gp_session_id;
+
+	token = get_or_create_token_on_qd();
+	tokenStr = print_token(token);
+
+	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	infoEntry = (SessionInfoEntry *) hash_search(sharedSessionInfoHash, &tag,
-												 HASH_FIND, NULL);
-
-	/* The write gang is waiting on the latch. */
-	if (infoEntry)
-	{
-		latch = &infoEntry->udfCheckLatch;
-	}
-
+												 HASH_ENTER, &found);
+	elog(DEBUG3, "CDB_ENDPOINT: Finish endpoint init. Found SessionInfoEntry: %d",
+		 found);
 	/*
-	 * Here compare the cursorName in SessionInfoEntry so endpoint process
-	 * knows whether is the right time to set latch to tell WaitEndpointReady
-	 * endpoint is ready for retrieve, DECLARE statement can finish.
-	 *
-	 * Must make sure the cursorName is set before current function. This is
-	 * implemented by acquire LW_EXCLUSIVE EndpointLock when set cursorName in
-	 * check_endpoint_finished_by_cursor_name function.
+	 * Save the token if it is the first time we create endpoint in current
+	 * session. We guarantee that one session will map to one token only.
 	 */
-	if (latch && strncmp(infoEntry->cursorName, cursorName, NAMEDATALEN) == 0)
+	if (!found)
 	{
-		SetLatch(latch);
+		/* Track userID in current transaction */
+		MemoryContext oldMemoryCtx = CurrentMemoryContext;
+		MemoryContextSwitchTo(TopMemoryContext);
+		sessionUserList = lappend_oid(sessionUserList, GetUserId());
+		MemoryContextSwitchTo(oldMemoryCtx);
 	}
+	/*
+	 * Overwrite exists token in case the wrapped session id entry not get
+	 * removed For example, 1 hours ago, a session 7 exists and have entry
+	 * with token 123. And for some reason the entry not get remove by
+	 * session_info_clean_callback. Now current session is session 7 again.
+	 * Here need to overwrite the old token.
+	 */
+	memcpy(infoEntry->token, token, ENDPOINT_TOKEN_LEN);
+	elog(DEBUG3, "CDB_ENDPOINT: set new token %s, for session %d", tokenStr,
+		 gp_session_id);
 	LWLockRelease(ParallelCursorEndpointLock);
+
+	pfree(tokenStr);
 }
 
 /*
@@ -1069,6 +1084,8 @@ register_endpoint_callbacks(void)
 		/* Register callback to deal with proc endpoint xact abort. */
 		RegisterSubXactCallback(sender_subxact_callback, NULL);
 		RegisterXactCallback(sender_xact_abort_callback, NULL);
+
+		RegisterXactCallback(session_info_clean_callback, NULL);
 		isRegistered = true;
 	}
 }
@@ -1288,8 +1305,6 @@ check_dispatch_connection(void)
  * c: [Check] check if the endpoints have been finished retrieving in a non-blocking way.
  * w: [Wait] check if the endpoints have been finished retrieving in a blocking way. It
  *	  will return until endpoints were finished, or any error occurs.
- * r: [Ready] dispatch token to QE and wait for the QE or the entry db initializing
- *    endpoints. It will return until dest receiver is ready or timeout(5 seconds).
  */
 Datum
 gp_operate_endpoints(PG_FUNCTION_ARGS)
@@ -1311,10 +1326,6 @@ gp_operate_endpoints(PG_FUNCTION_ARGS)
 		case 'w':
 			retVal = check_endpoint_finished_by_cursor_name(cursorName, true);
 			break;
-		case 'r':
-			wait_for_ready_by_cursor_name(cursorName, tokenStr);
-			retVal = true;
-			break;
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1325,28 +1336,6 @@ gp_operate_endpoints(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(retVal);
 }
-
-
-/*
- * Register SessionInfoEntry clean up callback
- *
- * Since the SessionInfoEntry is created during WaitEndpointReady through
- * gp_operate_endpoints('r', *) UDF execute process(which is write gang or
- * QD), so callback needs to be registered on these processes.
- */
-void
-register_session_info_callback(void)
-{
-	static bool registered = false;
-
-	if (!registered)
-	{
-		registered = true;
-		/* Register session_info_clean_callback only for UDF execute processes */
-		RegisterXactCallback(session_info_clean_callback, NULL);
-	}
-}
-
 
 /*
  * session_info_clean_callback - callback when xact finished
@@ -1545,131 +1534,6 @@ check_endpoint_finished_by_cursor_name(const char *cursorName, bool isWait)
 		}
 	}
 	return isFinished;
-}
-
-/*
- * Waits until the QE is ready -- the endpoint will be ready for retrieve
- * after this function returns successfully.
- *
- * Create/reuse SessionInfoEntry for current session in shared memory.
- * SessionInfoEntry is used for retrieve auth and tracking parallel retrieve
- * from QD through UDF.
- */
-void
-wait_for_ready_by_cursor_name(const char *cursorName, const char *tokenStr)
-{
-	EndpointDesc *desc = NULL;
-	SessionInfoEntry *infoEntry = NULL;
-	Latch	   *latch = NULL;
-	bool		found = false;
-	SessionTokenTag tag;
-
-	/*
-	 * Since current process create SessionInfoEntry. Register clean callback
-	 * here.
-	 */
-	register_session_info_callback();
-
-	tag.sessionID = gp_session_id;
-	tag.userID = GetUserId();
-
-	/* track current session id for session_info_clean_callback  */
-	EndpointCtl.sessionID = gp_session_id;
-
-	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-
-	infoEntry = (SessionInfoEntry *) hash_search(sharedSessionInfoHash, &tag,
-												 HASH_ENTER, &found);
-
-	elog(DEBUG3, "CDB_ENDPOINT: Finish endpoint init. Found SessionInfoEntry: %d",
-		 found);
-
-	/*
-	 * Save the token if it is the first time we create endpoint in current
-	 * session. We guarantee that one session will map to one token only.
-	 */
-	if (!found)
-	{
-		/* Track userID in current transaction */
-		MemoryContext oldMemoryCtx = CurrentMemoryContext;
-		MemoryContextSwitchTo(TopMemoryContext);
-		sessionUserList = lappend_oid(sessionUserList, GetUserId());
-		MemoryContextSwitchTo(oldMemoryCtx);
-
-		InitSharedLatch(&infoEntry->udfCheckLatch);
-		OwnLatch(&infoEntry->udfCheckLatch);
-	}
-
-	/*
-	 * Overwrite exists token in case the wrapped session id entry not get
-	 * removed For example, 1 hours ago, a session 7 exists and have entry
-	 * with token 123. And for some reason the entry not get remove by
-	 * session_info_clean_callback. Now current session is session 7 again.
-	 * Here need to overwrite the old token.
-	 */
-	parse_token(infoEntry->token, tokenStr);
-	elog(DEBUG3, "CDB_ENDPOINT: set new token %s, for session %d", tokenStr,
-		 gp_session_id);
-
-	desc = find_endpoint_by_cursor_name(cursorName, false);
-
-	/*
-	 * If the endpoints have been created and attach status is prepared, just
-	 * return. Otherwise, set the init_wait_proc for current session and wait
-	 * on the latch.
-	 */
-	if (!desc || desc->attachStatus != Status_Prepared)
-	{
-		snprintf(infoEntry->cursorName, NAMEDATALEN, "%s", cursorName);
-		ResetLatch(&infoEntry->udfCheckLatch);
-		latch = &infoEntry->udfCheckLatch;
-	}
-
-	LWLockRelease(ParallelCursorEndpointLock);
-
-	if (latch)
-	{
-		int			wr = 0;
-		int			retryCount = 0;
-
-		while (true && retryCount < WAIT_ENDPOINT_INIT_RETRY_LIMIT)
-		{
-			CHECK_FOR_INTERRUPTS();
-
-			if (QueryFinishPending)
-				break;
-
-			check_dispatch_connection();
-
-			wr = WaitLatch(latch, WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT,
-						   WAIT_NORMAL_TIMEOUT);
-			retryCount++;
-			if (wr & WL_TIMEOUT)
-				continue;
-
-			if (wr & WL_POSTMASTER_DEATH)
-			{
-				elog(DEBUG3, "CDB_ENDPOINT: postmaster exit, DECLARE PARALLEL CURSOR failed.");
-				proc_exit(0);
-			}
-
-			Assert(wr & WL_LATCH_SET);
-			ResetLatch(latch);
-			break;
-		}
-
-		/*
-		 * Clear the cursor name so no need to set latch in
-		 * declare_parallel_retrieve_ready in current session
-		 */
-		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-		snprintf(infoEntry->cursorName, NAMEDATALEN, "%s", "");
-		LWLockRelease(ParallelCursorEndpointLock);
-
-		if ((wr & WL_TIMEOUT) && !QueryFinishPending)
-			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-							errmsg("creating endpoint timeout")));
-	}
 }
 
 /*

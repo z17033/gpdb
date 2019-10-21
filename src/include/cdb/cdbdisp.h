@@ -32,6 +32,7 @@ enum GangType;
 typedef enum DispatchWaitMode
 {
 	DISPATCH_WAIT_NONE = 0,			/* wait until QE fully completes */
+	DISPATCH_WAIT_ACK_MESSAGE,		/* wait until QE send acknowledge message */
 	DISPATCH_WAIT_FINISH,			/* send query finish */
 	DISPATCH_WAIT_CANCEL			/* send query cancel */
 } DispatchWaitMode;
@@ -51,6 +52,7 @@ typedef struct DispatcherInternalFuncs
 	bool (*checkForCancel)(struct CdbDispatcherState *ds);
 	int (*getWaitSocketFd)(struct CdbDispatcherState *ds);
 	void* (*makeDispatchParams)(int maxSlices, int largestGangSize, char *queryText, int queryTextLen);
+	void (*waitAckMessage)(struct CdbDispatcherState *ds, const char* message);
 	void (*checkResults)(struct CdbDispatcherState *ds, DispatchWaitMode waitMode);
 	void (*dispatchToGang)(struct CdbDispatcherState *ds, struct Gang *gp, int sliceIndex);
 	void (*waitDispatchFinish)(struct CdbDispatcherState *ds);
@@ -101,6 +103,20 @@ void
 cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds);
 
 /*
+ * cdbdisp_waitDispatchAckMessage:
+ *
+ * Wait for acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
+ *
+ * In some cases, QD needs wait and receive acknowledge message from QEs. So QD
+ * knows QE runs expectantly.
+ * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
+ *
+ * All unexpected acknowledge messages will be discarded.
+ */
+void
+cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message);
+
+/*
  * CdbCheckDispatchResult:
  *
  * Waits for completion of threads launched by cdbdisp_dispatchToGang().
@@ -111,7 +127,7 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds);
 void
 cdbdisp_checkDispatchResult(struct CdbDispatcherState *ds, DispatchWaitMode waitMode);
 
-/**
+/*
  * Check whether or not the PARALLEL RETRIEVE CURSOR Execution Finished
  * This func should be called after calling cdbdisp_checkDispatchResult().
  *
@@ -166,6 +182,13 @@ CdbDispatcherState * cdbdisp_makeDispatcherState(bool isExtendedQuery);
  * Free dispatcher memory context.
  */
 void cdbdisp_destroyDispatcherState(CdbDispatcherState *ds);
+
+/*
+ * cdb_sendAckMessageToQD - send acknowledge message to QD(runs on QE).
+ *
+ * QD use cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
+ */
+void cdb_sendAckMessageToQD(const char *message);
 
 void
 cdbdisp_makeDispatchParams(CdbDispatcherState *ds,

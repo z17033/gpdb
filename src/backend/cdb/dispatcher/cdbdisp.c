@@ -24,6 +24,8 @@
 #include "executor/execUtils.h"
 #include "libpq-fe.h"
 #include "libpq-int.h"
+#include "libpq/libpq.h"
+#include "libpq/pqformat.h"
 #include "cdb/cdbfts.h"
 #include "cdb/cdbgang.h"
 #include "cdb/cdbsreh.h"
@@ -103,6 +105,22 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds)
 }
 
 /*
+ * cdbdisp_waitDispatchAckMessage:
+ *
+ * Wait for acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
+ *
+ * In some cases, QD needs wait and receive acknowledge message from QEs. So QD
+ * knows QE runs expectantly.
+ * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
+ */
+void
+cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message)
+{
+	if (pDispatchFuncs->checkResults != NULL)
+		(pDispatchFuncs->waitAckMessage) (ds, message);
+}
+
+/*
  * cdbdisp_checkDispatchResult:
  *
  * Waits for completion of threads launched by cdbdisp_dispatchToGang().
@@ -134,7 +152,7 @@ cdbdisp_checkDispatchResult(struct CdbDispatcherState *ds,
 	}
 }
 
-/**
+/*
  * Check whether or not the PARALLEL RETRIEVE CURSOR Execution Finished
  * This func should be called after calling cdbdisp_checkDispatchResult().
  *
@@ -403,6 +421,19 @@ cdbdisp_destroyDispatcherState(CdbDispatcherState *ds)
 
 	if (h != NULL)
 		destroy_dispatcher_handle(h);
+}
+
+void cdb_sendAckMessageToQD(const char *message)
+{
+	Assert(Gp_role == GP_ROLE_EXECUTE);
+	StringInfoData buf;
+
+	pq_beginmessage(&buf, 'A');
+	pq_sendint(&buf, MyProcPid, sizeof(int32));
+	pq_sendstring(&buf, CDB_QE_ACKNOLEDGE_NOTIFY_CHANNEL); /* channel */
+	pq_sendstring(&buf, message);
+	pq_endmessage(&buf);
+	pq_flush();
 }
 
 void
