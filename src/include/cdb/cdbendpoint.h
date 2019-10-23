@@ -43,7 +43,7 @@
 
 
 /* ACK NOTICE MESSAGE FROM ENDPOINT QE/Entry DB to QD */
-#define ENDPOINT_READY "ENDPOINT_READY"
+#define ENDPOINT_READY_ACK "ENDPOINT_READY"
 
 /*
  * Roles that used in PARALLEL RETRIEVE CURSOR execution.
@@ -68,7 +68,7 @@ enum ParallelRtrvCursorExecRole
 enum EndPointExecPosition
 {
 	ENDPOINT_POS_INVALID,
-	ENDPOINT_ON_Entry_DB,
+	ENDPOINT_ON_ENTRY_DB,
 	ENDPOINT_ON_SINGLE_QE,
 	ENDPOINT_ON_SOME_QE,
 	ENDPOINT_ON_ALL_QE
@@ -86,7 +86,7 @@ extern enum EndPointExecPosition GetParallelCursorEndpointPosition(
 								  const struct Plan *planTree);
 extern List *ChooseEndpointContentIDForParallelCursor(
 		  const struct Plan *planTree, enum EndPointExecPosition *position);
-extern void WaitEndpointReady(CdbDispatcherState* ds);
+extern void WaitEndpointReady(EState *estate);
 
 /*
  * Below functions should run on Endpoints(QE/Entry DB).
@@ -95,7 +95,6 @@ extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const 
 extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest);
 
 /* UDFs for endpoints internal operation */
-extern Datum gp_operate_endpoints(PG_FUNCTION_ARGS);
 extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 

@@ -38,9 +38,7 @@
  *
  * The token is stored in a different structure SessionInfoEntry to make the
  * tokens same for all endpoints in the same session. The token is created on
- * QD and sent to QE's write gang by internal udf gp_operate_endpoints after
- * endpoint intialization and query starts. This happens on write gang since read
- * gang is busy with executing query plan and cannot respond to QD's command.
+ * each QE after plan get dispatched.
  *
  * DECLCARE returns only when endpoint and token are ready and query starts
  * execution. See WaitEndpointReady().
@@ -53,9 +51,8 @@
  * About implementation of endpoint receiver, see "cdbendpointretrieve.c".
  *
  * UDF gp_check_parallel_retrieve_cursor and gp_wait_parallel_retrieve_cursor are
- * supplied as client helper functions to monitor the retrieve status. They are
- * running on the write gangs to return/check endpoint's status in the shared
- * memory.
+ * supplied as client helper functions to monitor the retrieve status through
+ * QD - QE libpq connection.
  *
  * Copyright (c) 2019-Present Pivotal Software, Inc.
  *
@@ -130,9 +127,6 @@ typedef struct SessionInfoEntry
 {
 	SessionTokenTag tag;
 
-	Latch		udfCheckLatch;
-	char		cursorName[NAMEDATALEN];
-
 	/* The auth token for this session. */
 	int8		token[ENDPOINT_TOKEN_LEN];
 }	SessionInfoEntry;
@@ -156,8 +150,6 @@ static dsm_segment *activeDsmSeg = NULL;
 static void init_shared_endpoints(void *address);
 
 /* QD utility functions */
-static bool call_endpoint_udf_on_qd(const struct Plan *planTree,
-						const char *cursorName, char operator);
 static const int8 *get_or_create_token_on_qd(void);
 
 /* Endpoint helper function */
@@ -167,7 +159,7 @@ static void create_and_connect_mq(TupleDesc tupleDesc,
 					  dsm_segment **mqSeg /* out */ ,
 					  shm_mq_handle **mqHandle /* out */ );
 static void detach_mq(dsm_segment *dsmSeg);
-static void init_session_info_entry();
+static void init_session_info_entry(void);
 static void wait_receiver(void);
 static void unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc);
 static void signal_receiver_abort(pid_t receiverPid,
@@ -182,16 +174,12 @@ static void sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid
 /* utility */
 static void generate_endpoint_name(char *name, const char *cursorName,
 					   int32 sessionID, int32 segindex);
-static EndpointDesc *find_endpoint_by_cursor_name(const char *name,
-							 bool with_lock);
 static void check_dispatch_connection(void);
 
 /* Endpoints internal operation UDF's helper function */
 static void session_info_clean_callback(XactEvent ev, void *vp);
-static bool check_endpoint_finished_by_cursor_name(const char *cursorName,
-									   bool isWait);
 static bool check_parallel_retrieve_cursor(const char *cursorName, bool isWait);
-static bool check_parallel_cursor_errors(QueryDesc *queryDesc);
+static void check_parallel_cursor_errors(EState *estate);
 
 /*
  * Endpoint_ShmemSize - Calculate the shared memory size for PARALLEL RETRIEVE
@@ -274,7 +262,7 @@ GetParallelCursorEndpointPosition(const struct Plan *planTree)
 	if (planTree->flow->flotype == FLOW_SINGLETON &&
 		planTree->flow->locustype != CdbLocusType_SegmentGeneral)
 	{
-		return ENDPOINT_ON_Entry_DB;
+		return ENDPOINT_ON_ENTRY_DB;
 	}
 	else
 	{
@@ -319,7 +307,7 @@ ChooseEndpointContentIDForParallelCursor(const struct Plan *planTree,
 	*position = GetParallelCursorEndpointPosition(planTree);
 	switch (*position)
 	{
-		case ENDPOINT_ON_Entry_DB:
+		case ENDPOINT_ON_ENTRY_DB:
 			{
 				cids = list_make1_int(MASTER_CONTENT_ID);
 				break;
@@ -355,127 +343,13 @@ ChooseEndpointContentIDForParallelCursor(const struct Plan *planTree,
  * acknowledge NOTIFY message. Then, we know all endpoints are ready for retrieve.
  */
 void
-WaitEndpointReady(CdbDispatcherState* ds)
+WaitEndpointReady(EState *estate)
 {
-	ErrorData *qeError = NULL;
+	Assert(estate);
+	CdbDispatcherState* ds = estate->dispatcherState;
 
-	cdbdisp_waitDispatchAckMessage(ds, ENDPOINT_READY);
-	if(cdbdisp_checkResultsErrcode(ds->primaryResults))
-	{
-		cdbdisp_getDispatchResults(ds, &qeError);
-		Assert(qeError);
-		cdbdisp_destroyDispatcherState(ds);
-		ReThrowError(qeError);
-	}
-}
-
-/*
- * Calling endpoint UDF on QD process, and it will dispatch the query to all the
- * endpoints nodes basing on this parallel retrieve cursor plan. And return true
- * if all endpoints return true.
- */
-bool
-call_endpoint_udf_on_qd(const struct Plan *planTree, const char *cursorName,
-						char operator)
-{
-	bool		retVal = true;
-	StringInfoData cmdStr;
-	List	   *cids;
-	enum EndPointExecPosition endPointExecPosition;
-	char	   *tokenStr = NULL;
-
-	if (operator == 'r')
-	{
-		tokenStr = print_token(get_or_create_token_on_qd());
-		if (tokenStr == NULL)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("failed to create token string.")));
-		}
-	}
-
-	cids =
-		ChooseEndpointContentIDForParallelCursor(planTree, &endPointExecPosition);
-
-	if (endPointExecPosition == ENDPOINT_ON_Entry_DB)
-	{
-		Assert(cursorName != NULL);
-		retVal = DatumGetBool(DirectFunctionCall3(
-						  gp_operate_endpoints, CharGetDatum(operator),
-					CStringGetDatum(tokenStr), CStringGetDatum(cursorName)));
-	}
-	else
-	{
-		CdbPgResults cdb_pgresults = {NULL, 0};
-
-		initStringInfo(&cmdStr);
-
-		appendStringInfo(&cmdStr, "select \"pg_catalog\".\"__gp_operate_endpoints\"('%c', '%s', %s);", operator,
-						 tokenStr, TextDatumGetCString(DirectFunctionCall1(quote_literal, CStringGetTextDatum(cursorName))));
-		if (endPointExecPosition == ENDPOINT_ON_ALL_QE)
-		{
-			/* Push token to all segments */
-			CdbDispatchCommand(cmdStr.data, DF_CANCEL_ON_ERROR, &cdb_pgresults);
-		}
-		else
-		{
-			CdbDispatchCommandToSegments(cmdStr.data, DF_CANCEL_ON_ERROR, cids,
-										 &cdb_pgresults);
-			list_free(cids);
-		}
-
-		for (int i = 0; i < cdb_pgresults.numResults; i++)
-		{
-			PGresult   *res = cdb_pgresults.pg_results[i];
-			int			ntuples;
-			int			nfields;
-			bool		retValSeg = false;		/* return value from segment
-												 * UDF calling */
-
-			if (PQresultStatus(res) != PGRES_TUPLES_OK)
-			{
-				char	   *msg = pstrdup(PQresultErrorMessage(res));
-
-				cdbdisp_clearCdbPgResults(&cdb_pgresults);
-				ereport(ERROR,
-						(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
-						 errmsg("could not get return value of UDF "
-							  "__gp_operate_endpoints() from segment"),
-						 errdetail("%s", msg)));
-			}
-
-			ntuples = PQntuples(res);
-			nfields = PQnfields(res);
-			if (ntuples != 1 || nfields != 1)
-			{
-				cdbdisp_clearCdbPgResults(&cdb_pgresults);
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("unexpected result set received from "
-								"__gp_operate_endpoints()"),
-						 errdetail("Result set expected to be 1 row and 1 "
-								 "column, but it had %d rows and %d columns",
-								   ntuples, nfields)));
-			}
-
-			retValSeg = (strncmp(PQgetvalue(res, 0, 0), "t", 1) == 0);
-
-			/* If any segment return false, then return false for this func */
-			if (!retValSeg)
-			{
-				retVal = retValSeg;
-				break;
-			}
-		}
-
-		cdbdisp_clearCdbPgResults(&cdb_pgresults);
-	}
-	if (operator == 'r')
-	{
-		pfree(tokenStr);
-	}
-	return retVal;
+	cdbdisp_waitDispatchAckMessage(ds, ENDPOINT_READY_ACK, true);
+	check_parallel_cursor_errors(estate);
 }
 
 /*
@@ -546,7 +420,7 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
 	 * Once the endpoint has been created in shared memory, send acknowledge
 	 * message to QD so DECLARE PARALLEL RETRIEVE CURSOR statement can finish.
 	 */
-	cdb_sendAckMessageToQD(ENDPOINT_READY);
+	cdb_sendAckMessageToQD(ENDPOINT_READY_ACK);
 	return CreateTupleQueueDestReceiver(shmMqHandle);
 }
 
@@ -781,7 +655,7 @@ create_and_connect_mq(TupleDesc tupleDesc, dsm_segment **mqSeg /* out */ ,
  * SessionInfoEntry is used for retrieve auth.
  */
 void
-init_session_info_entry()
+init_session_info_entry(void)
 {
 	SessionInfoEntry	*infoEntry = NULL;
 	bool				 found = false;
@@ -920,9 +794,8 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 						  endPointDesc->attachStatus);
 
 	/*
-	 * Only the endpoint QE/QD execute this unset sender pid function. The
-	 * sender pid in Endpoint entry must be MyProcPid or InvalidPid. Note the
-	 * "gp_operate_endpoints" UDF dispatch comment.
+	 * Only the endpoint QE/entry DB execute this unset sender pid function. The
+	 * sender pid in Endpoint entry must be MyProcPid or InvalidPid.
 	 */
 	Assert(MyProcPid == endPointDesc->senderPid ||
 		   endPointDesc->senderPid == InvalidPid);
@@ -933,20 +806,11 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 			hash_search(sharedSessionInfoHash, &tag, HASH_FIND, NULL);
 
 		/*
-		 * sessionInfoEntry may get removed on process(which executed
-		 * gp_operate_endpoints('r', *) UDF). This means xact finished.
-		 * No need to set latch.
+		 * sessionInfoEntry may get removed. This means xact finished.
 		 */
 		if (sessionInfoEntry)
 		{
-			/*
-			 * Here compare the cursorName in SessionInfoEntry so endpoint
-			 * process knows whether is the right time to SetLatch that tells
-			 * UDF gp_wait_parallel_retrieve_cursor the retrieve is finished.
-			 */
-			if (strncmp((const char *) endPointDesc->cursorName,
-						sessionInfoEntry->cursorName, NAMEDATALEN) == 0)
-				SetLatch(&sessionInfoEntry->udfCheckLatch);
+			cdb_sendAckMessageToQD(ENDPOINT_FINISHED_ACK);
 		}
 	}
 }
@@ -979,9 +843,8 @@ endpoint_abort(void)
 	if (activeSharedEndpoint)
 	{
 		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-		/* These two have to be called in one lock section.
-		 * Otherwise the write gang could get a endpoint which should be deleted
-		 * already.*/
+		/* These two better be called in one lock section.
+		 * So retriever abort will not execute extra works. */
 		unset_endpoint_sender_pid(activeSharedEndpoint);
 		free_endpoint(activeSharedEndpoint);
 		LWLockRelease(ParallelCursorEndpointLock);
@@ -1240,37 +1103,11 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID,
 }
 
 /*
- * Find the EndpointDesc entry by the given cursor name in current session.
+ * Check the QD dispatcher connection whether is lost
  */
-EndpointDesc *
-find_endpoint_by_cursor_name(const char *cursorName, bool withLock)
-{
-	EndpointDesc *res = NULL;
-
-	if (withLock)
-		LWLockAcquire(ParallelCursorEndpointLock, LW_SHARED);
-
-	for (int i = 0; i < MAX_ENDPOINT_SIZE; ++i)
-	{
-		if (!sharedEndpoints[i].empty &&
-			sharedEndpoints[i].sessionID == gp_session_id &&
-		strncmp(sharedEndpoints[i].cursorName, cursorName, NAMEDATALEN) == 0)
-		{
-			res = &sharedEndpoints[i];
-			break;
-		}
-	}
-
-	if (withLock)
-		LWLockRelease(ParallelCursorEndpointLock);
-
-	return res;
-}
-
 void
 check_dispatch_connection(void)
 {
-	/* Check the QD dispatcher connection is lost */
 	unsigned char firstchar;
 	int			r;
 
@@ -1294,47 +1131,6 @@ check_dispatch_connection(void)
 		pq_endmsgread();
 		/* continue processing as normal case */
 	}
-}
-
-/*
- * gp_operate_endpoints - Operation for EndpointDesc entries on endpoint.
- *
- * Dispatch this UDF by "CdbDispatchCommandToSegments" and "CdbDispatchCommand",
- * It'll always dispatch to writer gang.
- *
- * c: [Check] check if the endpoints have been finished retrieving in a non-blocking way.
- * w: [Wait] check if the endpoints have been finished retrieving in a blocking way. It
- *	  will return until endpoints were finished, or any error occurs.
- */
-Datum
-gp_operate_endpoints(PG_FUNCTION_ARGS)
-{
-	char		operation;
-	bool		retVal = false;
-	const char *tokenStr = NULL;
-	const char *cursorName = NULL;
-
-	operation = PG_GETARG_CHAR(0);
-	tokenStr = PG_GETARG_CSTRING(1);
-	cursorName = PG_GETARG_CSTRING(2);
-
-	switch (operation)
-	{
-		case 'c':
-			retVal = check_endpoint_finished_by_cursor_name(cursorName, false);
-			break;
-		case 'w':
-			retVal = check_endpoint_finished_by_cursor_name(cursorName, true);
-			break;
-		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("failed to execute gp_operate_endpoints('%c', '%s')",
-							operation, tokenStr)));
-			retVal = false;
-	}
-
-	PG_RETURN_BOOL(retVal);
 }
 
 /*
@@ -1384,156 +1180,6 @@ session_info_clean_callback(XactEvent ev, void *vp)
 			sessionUserList = NULL;
 		}
 	}
-}
-
-/*
- * Check if the endpoint has finished retrieving data
- *
- * This func is called in UDF in the write gang.
- *
- * In NOWAIT mode, this func should not report any error about the endpoint info
- * or endpoint QE execute error, because if the write gang error, it need time to
- * handle cancel, and report error to QD, when next statement comes, it will
- * report error at this time, it make the error message misunderstanding (User may
- * think that the endpoint backend of the latter cursor issues error). Also it
- * also issues 2 error messages (one is from endpoint backend, the other is from
- * the related write gang process). So we need to check query dispatcher (which
- * dispatch the original query of the parallel retrieve cursor) in addition in
- * case of any error issues.
- *
- * In WAIT mode, we cannot use the same way as NOWAIT mode, because if one of the
- * endpoint backend reports error, then the query dispatcher (which dispatch this
- * UDF) will not return because other endpoints still waiting for retrieving
- * session. So just report error in this func, although still 2 error messages
- * issues, but the error is regarded as this statement's error (because there is
- * no other statement running at the same session)
- *
- * Parameters:
- * - cursorName: specify the cursor this endpoint belongs to.
- * - isWait: wait until finished or not
- *
- * Return Value:
- *	 whether this endpoint finished or not.
- */
-bool
-check_endpoint_finished_by_cursor_name(const char *cursorName, bool isWait)
-{
-	SessionTokenTag tag;
-	SessionInfoEntry *sessionInfoEntry;
-	bool		isFinished = false;
-	EndpointDesc *endpointDesc = NULL;
-	Latch	   *latch = NULL;
-
-	tag.userID = GetUserId();
-	tag.sessionID = gp_session_id;
-
-	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-
-	endpointDesc = find_endpoint_by_cursor_name(cursorName, false);
-	if (endpointDesc)
-	{
-		if (endpointDesc->userID != GetUserId())
-		{
-			LWLockRelease(ParallelCursorEndpointLock);
-			ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						errmsg("the PARALLEL RETRIEVE CURSOR was created by "
-							   "a different user."),
-							errhint("using the same user as the PARALLEL "
-									"RETRIEVE CURSOR creator.")));
-		}
-		isFinished = endpointDesc->attachStatus == Status_Finished;
-	}
-	else
-	{
-		LWLockRelease(ParallelCursorEndpointLock);
-		if (isWait)
-		{
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("endpoint doesn't exist.")));
-		}
-		else
-		{
-			/*
-			 * if no endpoint found, it maybe something wrong, just return
-			 * false, i.e. not finished successfully.
-			 */
-			return false;
-		}
-	}
-
-	sessionInfoEntry = hash_search(sharedSessionInfoHash, &tag, HASH_FIND, NULL);
-	Assert(sessionInfoEntry);
-
-	/*
-	 * If wait is needed, set right cursorName in SessionInfoEntry when
-	 * holding LW_EXCLUSIVE EndpointLock. This guarantee sender will set latch
-	 * when retrieve finished. Reset latch is needed before release the
-	 * EndpointLock. Cause here need clean the latch for waiting. And sender
-	 * may SetLatch right after release the EndpointLock. If reset latch out
-	 * the lock, here may WaitLatch forever.
-	 *
-	 * See declare_parallel_retrieve_ready for more details.
-	 */
-	if (isWait && !isFinished)
-	{
-		latch = &sessionInfoEntry->udfCheckLatch;
-		ResetLatch(latch);
-		snprintf(sessionInfoEntry->cursorName, NAMEDATALEN, "%s", cursorName);
-	}
-
-	LWLockRelease(ParallelCursorEndpointLock);
-
-	if (latch)
-	{
-		elog(DEBUG3,
-		   "CDB_ENDPOINT: WaitLatch on sessionInfoEntry->udf_check_latch by "
-			 "pid: %d",
-			 MyProcPid);
-		while (true)
-		{
-			int			wr;
-
-			CHECK_FOR_INTERRUPTS();
-
-			if (QueryFinishPending)
-				break;
-			wr = WaitLatch(latch, WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT,
-						   WAIT_NORMAL_TIMEOUT);
-			if (wr & WL_TIMEOUT)
-				continue;
-			if (wr & WL_POSTMASTER_DEATH)
-			{
-				snprintf(sessionInfoEntry->cursorName, NAMEDATALEN, "%s", "");
-				proc_exit(0);
-			}
-			break;
-		}
-
-		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-		sessionInfoEntry =
-			hash_search(sharedSessionInfoHash, &tag, HASH_FIND, NULL);
-		if (sessionInfoEntry)
-		{
-			/*
-			 * It's ok not clean cursorName for interrupts or proc_exit, since
-			 * ResetLatch is always executed before WaitLatch, it's also ok
-			 * the latch get set by others already.
-			 */
-			snprintf(sessionInfoEntry->cursorName, NAMEDATALEN, "%s", "");
-		}
-		endpointDesc = find_endpoint_by_cursor_name(cursorName, false);
-		if (endpointDesc)
-		{
-			isFinished = endpointDesc->attachStatus == Status_Finished;
-		}
-		LWLockRelease(ParallelCursorEndpointLock);
-		if (endpointDesc == NULL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_INVALID_CURSOR_STATE),
-							errmsg("endpoint for '%s' get aborted.", cursorName)));
-		}
-	}
-	return isFinished;
 }
 
 /*
@@ -1591,6 +1237,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 	bool		retVal = false;
 	bool		isParallelRetrieve = false;
 	Portal		portal;
+	EState *estate = NULL;
 
 	/* get the portal from the portal name */
 	portal = GetPortalByName(cursorName);
@@ -1609,21 +1256,8 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 			   errmsg("this UDF only works for PARALLEL RETRIEVE CURSOR.")));
 		return false;
 	}
-
-	/*
-	 * See comments at check_endpoint_finished_by_cursor_name()
-	 *
-	 * In NOWAIT mode, need to check the query dispatcher for the orginal
-	 * query of the parallel retrieve cursor, because the UDF will not report
-	 * error.
-	 *
-	 * In WAIT mode, the UDF will report error, don't need to check the query
-	 * dispatcher.
-	 */
-	PlannedStmt *stmt = (PlannedStmt *) linitial(portal->stmts);
-
-	retVal =
-		call_endpoint_udf_on_qd(stmt->planTree, cursorName, isWait ? 'w' : 'c');
+	estate = portal->queryDesc->estate;
+	retVal = cdbdisp_waitDispatchAckMessage(estate->dispatcherState, ENDPOINT_FINISHED_ACK, isWait);
 
 #ifdef FAULT_INJECTOR
 	HOLD_INTERRUPTS();
@@ -1631,8 +1265,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 	RESUME_INTERRUPTS();
 #endif
 
-	if (!isWait && !retVal)
-		check_parallel_cursor_errors(portal->queryDesc);
+	check_parallel_cursor_errors(estate);
 	return retVal;
 }
 
@@ -1643,34 +1276,23 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
  * If get error, then rethrow the error.
  * Return true if the PARALLEL RETRIEVE CURSOR Execution Finished.
  */
-bool
-check_parallel_cursor_errors(QueryDesc *queryDesc)
+void
+check_parallel_cursor_errors(EState *estate)
 {
-	EState	   *estate;
-	bool		isParallelRetrCursorFinished = false;
-
-	/* caller must have switched into per-query memory context already */
-	estate = queryDesc->estate;
-
+	Assert(estate);
+	CdbDispatcherState *ds = estate->dispatcherState;
 	/*
 	 * If QD, wait for QEs to finish and check their results.
 	 */
-	if (estate->dispatcherState && estate->dispatcherState->primaryResults)
+	if (cdbdisp_checkResultsErrcode(ds->primaryResults))
 	{
-		CdbDispatcherState *ds = estate->dispatcherState;
+		ErrorData  *qeError = NULL;
 
-		if (cdbdisp_checkForCancel(ds))
-		{
-			ErrorData  *qeError = NULL;
-
-			cdbdisp_getDispatchResults(ds, &qeError);
-			Assert(qeError);
-			estate->dispatcherState = NULL;
-			cdbdisp_cancelDispatch(ds);
-			cdbdisp_destroyDispatcherState(ds);
-			ReThrowError(qeError);
-		}
-		isParallelRetrCursorFinished = cdbdisp_isDispatchFinished(ds);
+		cdbdisp_getDispatchResults(ds, &qeError);
+		Assert(qeError);
+		estate->dispatcherState = NULL;
+		cdbdisp_cancelDispatch(ds);
+		cdbdisp_destroyDispatcherState(ds);
+		ReThrowError(qeError);
 	}
-	return isParallelRetrCursorFinished;
 }

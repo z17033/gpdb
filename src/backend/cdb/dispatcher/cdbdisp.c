@@ -113,11 +113,13 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds)
  * knows QE runs expectantly.
  * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
  */
-void
-cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message)
+bool
+cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds,
+							   const char *message, bool wait)
 {
-	if (pDispatchFuncs->checkResults != NULL)
-		(pDispatchFuncs->waitAckMessage) (ds, message);
+	if (pDispatchFuncs == NULL || pDispatchFuncs->waitAckMessage == NULL)
+		return false;
+	return (pDispatchFuncs->waitAckMessage) (ds, message, wait);
 }
 
 /*

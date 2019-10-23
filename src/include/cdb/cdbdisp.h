@@ -52,7 +52,7 @@ typedef struct DispatcherInternalFuncs
 	bool (*checkForCancel)(struct CdbDispatcherState *ds);
 	int (*getWaitSocketFd)(struct CdbDispatcherState *ds);
 	void* (*makeDispatchParams)(int maxSlices, int largestGangSize, char *queryText, int queryTextLen);
-	void (*waitAckMessage)(struct CdbDispatcherState *ds, const char* message);
+	bool (*waitAckMessage)(struct CdbDispatcherState *ds, const char* message, bool wait);
 	void (*checkResults)(struct CdbDispatcherState *ds, DispatchWaitMode waitMode);
 	void (*dispatchToGang)(struct CdbDispatcherState *ds, struct Gang *gp, int sliceIndex);
 	void (*waitDispatchFinish)(struct CdbDispatcherState *ds);
@@ -110,11 +110,10 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds);
  * In some cases, QD needs wait and receive acknowledge message from QEs. So QD
  * knows QE runs expectantly.
  * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
- *
- * All unexpected acknowledge messages will be discarded.
  */
-void
-cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message);
+bool
+cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message,
+							   bool wait);
 
 /*
  * CdbCheckDispatchResult:

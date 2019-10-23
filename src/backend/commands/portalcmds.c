@@ -166,7 +166,7 @@ PerformCursorOpen(PlannedStmt *stmt, ParamListInfo params,
 
 	if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
 	{
-		WaitEndpointReady(portal->queryDesc->estate->dispatcherState);
+		WaitEndpointReady(portal->queryDesc->estate);
 	}
 	/*
 	 * We're done; the query won't actually be run until PerformPortalFetch is

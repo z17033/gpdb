@@ -21,7 +21,7 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 -- check no endpoint info
 1: SELECT token,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*U: @in_sh 'sub @TOKEN1 ${TOKEN1}': SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN1';
+*U: SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c1';
 
 -- error out for closed cursor
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
@@ -36,27 +36,27 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 
 -- check initial status after "CHECK PARALLEL RETRIEVE CURSOR"
-2: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2' AND token='@TOKEN2';
-*U: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
 -- check status if some endpoint retrieve partial results, some endpoint finished retrieving, some endpoint not start retrieving
 0R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT2";
 1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-2: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2' AND token='@TOKEN2';
-*U: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
 -- return 0 row instead of reporting error if finished retrieving data from this endpoint, while other endpoint have not finished retrieving.
 1R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
 -- finished retrieving all endpoints and check status
 *R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT2";
-2: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2' AND token='@TOKEN2';
-*U: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
 
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 1: COMMIT;
 -- check the cursor auto closed when transaction closed
 -- check no endpoint info
-1: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2' AND token='@TOKEN2';
+1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
 -- check no token info on QE after close PARALLEL RETRIEVE CURSOR
-*U: @in_sh 'sub @TOKEN2 ${TOKEN2}': SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN2';
+*U: SELECT * FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
 
 -- error out for closed cursor
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
@@ -80,17 +80,17 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 42: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1: SELECT pg_sleep(0.4);
-2: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3' AND token='@TOKEN3';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3';
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c3');
 -- check no endpoint info left
-2: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3' AND token='@TOKEN3';
-*U: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c3';
 -- report error for EXECUTE canceled PARALLEL RETRIEVE CURSOR
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c3');
 1: ROLLBACK;
 -- check no endpoint info 
-2: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3' AND token='@TOKEN3';
-*U: @in_sh 'sub @TOKEN3 $TOKEN3': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN3';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c3';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c3';
 
 ---------- Test4: terminate (using signal QUIT) QE exec backend
 1: BEGIN;
@@ -109,18 +109,18 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 0Uq:
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1: SELECT pg_sleep(0.4);
-2: @in_sh 'sub @TOKEN4 $TOKEN4': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4' AND token='@TOKEN4';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4';
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c4');
 -- check no endpoint info left
 2q:
-2: @in_sh 'sub @TOKEN4 $TOKEN4': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4' AND token='@TOKEN4';
-*U: @in_sh 'sub @TOKEN4 $TOKEN4': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c4';
 -- report error for EXECUTE canceled PARALLEL RETRIEVE CURSOR
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c4');
 1: ROLLBACK;
 -- check no endpoint info 
-2: @in_sh 'sub @TOKEN4 $TOKEN4': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4' AND token='@TOKEN4';
-*U: @in_sh 'sub @TOKEN4 $TOKEN4': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN4';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c4';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c4';
 2Rq:
 
 ---------- Test5: terminate (using signal TERM) QE exec backend
@@ -141,17 +141,17 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 42: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1: SELECT pg_sleep(0.4);
-2: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5' AND token='@TOKEN5';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5';
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c5');
 -- check no endpoint info left
-2: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5' AND token='@TOKEN5';
-*U: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c5';
 -- report error for EXECUTE canceled PARALLEL RETRIEVE CURSOR
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c5');
 1: ROLLBACK;
 -- check no endpoint info 
-2: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5' AND token='@TOKEN5';
-*U: @in_sh 'sub @TOKEN5 $TOKEN5': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN5';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c5';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c5';
 
 ---------- Test6: Cancel (using signal INT) the process of 'CHECK PARALLEL RETRIEVE CURSOR'
 -- faul injection on QD
@@ -172,14 +172,14 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 -- check it can cancel the "gp_check_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
-2: @in_sh 'sub @TOKEN6 $TOKEN6': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c6' AND token='@TOKEN6';
-*U: @in_sh 'sub @TOKEN6 $TOKEN6': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c6';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c6';
 -- report error for EXECUTE canceled PARALLEL RETRIEVE CURSOR
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c6');
 1: ROLLBACK;
 -- check no endpoint info
-2: @in_sh 'sub @TOKEN6 $TOKEN6': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c6' AND token='@TOKEN6';
-*U: @in_sh 'sub @TOKEN6 $TOKEN6': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN6';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c6';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c6';
 
 ---------- Test6.1: Cancel (using signal INT) the process of 'CHECK PARALLEL RETRIEVE CURSOR' without rollback
 -- faul injection on QD
@@ -200,13 +200,13 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 -- check it can cancel the "gp_check_parallel_retrieve_cursor"
 1<:
 -- check no endpoint info left
-2: @in_sh 'sub @TOKEN61 $TOKEN61': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c61' AND token='@TOKEN61';
-*U: @in_sh 'sub @TOKEN61 $TOKEN61': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN61';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c61';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c61';
 -- quit the session of 'CHECK PARALLEL RETRIEVE CURSOR' and keep other session connected
 1q:
 -- check no endpoint info
-2: @in_sh 'sub @TOKEN61 $TOKEN61': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c61' AND token='@TOKEN61';
-*U: @in_sh 'sub @TOKEN61 $TOKEN61': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN61';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c61';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c61';
 0Rq:
 1Rq:
 
@@ -221,7 +221,7 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 -- some endpoint retrieve partial results, some endpoint finished retrieving, some endpoint not start retrieving
 0R: @in_sh 'sub_endpoint_name @ENDPOINT7': RETRIEVE 10 FROM ENDPOINT "@ENDPOINT7";
 1R: @in_sh 'sub_endpoint_name @ENDPOINT7': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT7";
-2U: @in_sh 'sub @TOKEN7 $TOKEN7': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+2U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c7';
 -- run 'kill -s QUIT QDPid' to cancel the endpoint execution backend, retrieve session still can work
 -- here need to sleep sometime to wait for endpoint QE backend to detect QD connection lost.
 1&: SELECT * FROM gp_check_parallel_retrieve_cursor('c7');
@@ -233,25 +233,25 @@ CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 2q:
 -1Uq:
 -- check no endpoint info left
-2: @in_sh 'sub @TOKEN7 $TOKEN7': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c7' AND token='@TOKEN7';
-*U: @in_sh 'sub @TOKEN7 $TOKEN7': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c7';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c7';
 -- report error for EXECUTE canceled PARALLEL RETRIEVE CURSOR
 1: SELECT * FROM gp_wait_parallel_retrieve_cursor('c7');
 1: ROLLBACK;
 -- check no endpoint info
-2: @in_sh 'sub @TOKEN7 $TOKEN7': SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c7' AND token='@TOKEN7';
-*U: @in_sh 'sub @TOKEN7 $TOKEN7': SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE token='@TOKEN7';
+2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c7';
+*U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c7';
 
 ---------- Test8: Status visibilities for different sessions
 1: BEGIN;
 1: DECLARE c8 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-1: @out_sh 'get_cell SESSION81 3 2 ; get_token_cell TOKEN81 3 1 ; match_sub_tt session81 $SESSION81 > /dev/null ; match_sub token81 $TOKEN81': SELECT token,sessionid,status FROM GP_ENDPOINTS WHERE cursorname='c8';
+1: @out_sh 'get_cell SESSION81 3 2 ; match_sub session81 $SESSION81' : SELECT sessionid,status FROM GP_ENDPOINTS WHERE cursorname='c8';
 -- Session 2 can only see its own cursors by default.
 2: BEGIN;
 2: DECLARE c8 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-2: @out_sh 'get_cell SESSION82 3 2 ; get_token_cell TOKEN82 3 1 ; match_sub_tt session82 $SESSION82 > /dev/null ; match_sub token82 $TOKEN82': SELECT token,sessionid,status FROM GP_ENDPOINTS WHERE cursorname='c8';
+2: @out_sh 'get_cell SESSION82 3 2 ; match_sub session82 $SESSION82' : SELECT sessionid,status FROM GP_ENDPOINTS WHERE cursorname='c8';
 -- Session 2 can only see all cursors with gp_endpoints_info(true).
-2: SELECT token,sessionid,status FROM gp_endpoints_info(true) WHERE cursorname='c8';
+2: SELECT sessionid,status FROM gp_endpoints_info(true) WHERE cursorname='c8';
 
 1: CLOSE c8;
 1: END;

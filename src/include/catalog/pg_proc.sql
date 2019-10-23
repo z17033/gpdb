@@ -156,11 +156,9 @@
 
  CREATE FUNCTION gp_endpoints_status_info(OUT token text, OUT databaseid int4, OUT senderpid int4, OUT receiverpid int4, OUT status text, OUT dbid int4, OUT sessionid int4, OUT userid oid, OUT endpointname text, OUT cursorname text) RETURNS SETOF record LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_endpoints_status_info' WITH (OID=7179, DESCRIPTION="endpoints status information");
 
- CREATE FUNCTION __gp_operate_endpoints(IN operation char, IN tokenstr cstring, IN cursorname cstring, OUT success bool) RETURNS bool LANGUAGE internal VOLATILE STRICT EXECUTE ON ANY AS 'gp_operate_endpoints' WITH (OID=7180, DESCRIPTION="operation on endpoints entries");
-
- CREATE FUNCTION gp_check_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_check_parallel_retrieve_cursor' WITH (OID=7181, DESCRIPTION="check whether all endpoint of this parallel retrieve cursor has been retrieved finished ");
+ CREATE FUNCTION gp_check_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_check_parallel_retrieve_cursor' WITH (OID=7180, DESCRIPTION="check whether all endpoint of this parallel retrieve cursor has been retrieved finished ");
  
- CREATE FUNCTION gp_wait_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_wait_parallel_retrieve_cursor' WITH (OID=7182, DESCRIPTION="wait until all endpoint of this parallel retrieve cursor has been retrieved finished ");
+ CREATE FUNCTION gp_wait_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_wait_parallel_retrieve_cursor' WITH (OID=7181, DESCRIPTION="wait until all endpoint of this parallel retrieve cursor has been retrieved finished ");
 
 -- the bitmap index access method routines
  CREATE FUNCTION bmgettuple(internal, internal) RETURNS bool LANGUAGE internal VOLATILE STRICT AS 'bmgettuple' WITH (OID=7050, DESCRIPTION="bitmap(internal)");

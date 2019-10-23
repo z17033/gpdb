@@ -90,7 +90,7 @@ typedef struct CdbDispatchCmdAsync
 
 static void *cdbdisp_makeDispatchParams_async(int maxSlices, int largestGangSize, char *queryText, int len);
 
-static void cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message);
+static bool cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait);
 
 static void cdbdisp_checkDispatchResult_async(struct CdbDispatcherState *ds,
 								  DispatchWaitMode waitMode);
@@ -325,19 +325,18 @@ cdbdisp_dispatchToGang_async(struct CdbDispatcherState *ds,
  * Wait all dispatch connection to get back specified acknowledge message,
  * either success or fail. (Set stillRunning to true when
  * one dispatch work is completed)
- *
- * All unexpected acknowledge messages will be discarded.
  */
-static void
-cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message)
+static bool
+cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait)
 {
 	Assert(ds != NULL);
 	DispatchWaitMode prevWaitMode;
+	bool receivedAll = true;
 	CdbDispatchCmdAsync *pParms = (CdbDispatchCmdAsync *) ds->dispatchParams;
 
 	/* cdbdisp_destroyDispatcherState is called */
-	if (pParms == NULL)
-		return;
+	if (pParms == NULL || message == NULL)
+		return false;
 
 	pParms->ackMessage = message;
 	prevWaitMode = pParms->waitMode;
@@ -352,10 +351,22 @@ cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message)
 		pParms->dispatchResultPtrArray[i]->receivedAckMsg = false;
 	}
 
-	checkDispatchResult(ds, true);
+	checkDispatchResult(ds, wait);
+
+	for (int i = 0; i < pParms->dispatchCount; i++)
+	{
+		if (!pParms->dispatchResultPtrArray[i]->receivedAckMsg &&
+			pParms->dispatchResultPtrArray[i]->stillRunning)
+		{
+			receivedAll = false;
+			break;
+		}
+	}
 
 	pParms->waitMode = prevWaitMode;
 	pParms->ackMessage = NULL;
+
+	return receivedAll;
 }
 
 /*
@@ -668,7 +679,6 @@ isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message)
 {
 	bool received = false;
 	PGnotify* ackNotifies = (PGnotify *) dispatchResult->ackPGNotifies;
-	PGnotify* lastNotify = NULL;
 
 	if (!message)
 		elog(ERROR, "Notify ACK message is required.");
@@ -678,25 +688,15 @@ isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message)
 
 	while (ackNotifies)
 	{
+		PGnotify* temp;
 		if (strcmp(ackNotifies->extra, message) == 0)
 		{
 			received = true;
 			dispatchResult->receivedAckMsg = true;
-		}
-		PGnotify* temp = ackNotifies;
-		ackNotifies = temp->next;
-
-		if (received)
-		{
-			if (lastNotify == NULL)
-				dispatchResult->ackPGNotifies = (struct PGnotify *) ackNotifies;
-			else
-				lastNotify->next = ackNotifies;
-			PQfreemem(temp);
 			break;
 		}
-		else
-			lastNotify = temp;
+		temp = ackNotifies;
+		ackNotifies = temp->next;
 	}
 	return received;
 }
