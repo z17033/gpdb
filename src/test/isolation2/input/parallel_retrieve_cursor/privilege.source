@@ -42,12 +42,12 @@ RESET SESSION AUTHORIZATION;
 2: SELECT token, usename, status FROM gp_endpoints_info(true) endpoints, pg_user WHERE endpoints.userid = pg_user.usesysid order by usename;
 
 --- adminuser should be able to see all endpoints declared by u1 in retrieved mode
-3: @in_sh 'export RETRIEVE_USER="adminuser"; echo $RAW_STR ' : SELECT 1;
+3: @in_sh 'export CURRENT_ENDPOINT_POSTFIX=1 ; export RETRIEVE_USER="adminuser"; echo $RAW_STR ' : SELECT 1;
 0R: SELECT SESSION_USER, CURRENT_USER;
 0U: SELECT token, userid FROM gp_endpoints_status_info();
 0R: @in_sh 'sub_endpoint_name @ENDPOINT1': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT1";
 0Rq:
-3: @in_sh 'export RETRIEVE_USER="u1"; echo $RAW_STR ' : SELECT 1;
+3: @in_sh 'export CURRENT_ENDPOINT_POSTFIX=2 ; export RETRIEVE_USER="u1"; echo $RAW_STR ' : SELECT 1;
 --- Login as u1 and retrieve all to finish the test
 0R: SELECT SESSION_USER, CURRENT_USER;
 0R: @in_sh 'sub_endpoint_name @ENDPOINT2': RETRIEVE 1 FROM ENDPOINT "@ENDPOINT2";
@@ -84,10 +84,12 @@ RESET SESSION AUTHORIZATION;
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 
+2: @out_sh 'parse_endpoint 40 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c0';
+
 2: @out_sh 'parse_endpoint 4 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
 
 --- adminuser should NOT be able to retrieve from other's PARALLEL RETRIEVE CURSOR
-3: @in_sh 'export RETRIEVE_USER="adminuser"; echo $RAW_STR ' : SELECT 1;
+3: @in_sh 'export CURRENT_ENDPOINT_POSTFIX=40 ; export RETRIEVE_USER="adminuser"; echo $RAW_STR ' : SELECT 1;
 *R: SET SESSION AUTHORIZATION adminuser;
 *R: SELECT SESSION_USER, CURRENT_USER;
 *R: @in_sh 'sub_endpoint_name @ENDPOINT4': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT4";
@@ -101,6 +103,7 @@ RESET SESSION AUTHORIZATION;
 1<:
 1: CLOSE c1;
 1: END;
+1q:
 3q:
 0Rq:
 1Rq:
@@ -124,6 +127,7 @@ RESET SESSION AUTHORIZATION;
 1: BEGIN;
 -- Used to let super login to retrieve session so then it can change user in session.
 1: DECLARE c0 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
+1: @out_sh 'parse_endpoint 50 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c0';
 1: SET SESSION AUTHORIZATION u1;
 --- c4 is declared and executed by u1
 1: DECLARE c4 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
@@ -138,7 +142,7 @@ RESET SESSION AUTHORIZATION;
 1&: SELECT * FROM gp_wait_parallel_retrieve_cursor('c4');
 
 --- u2 is not able to see u1's endpoints in RETRIEVE mode
-*R: SET SESSION AUTHORIZATION u2;
+*R: @in_sh 'export CURRENT_ENDPOINT_POSTFIX=50 ; export RETRIEVE_USER="adminuser" ; echo $RAW_STR' : SET SESSION AUTHORIZATION u2;
 *U: SELECT token, userid FROM gp_endpoints_status_info();
 
 --- u2 is not able to retrieve from u1's endpoints in RETRIEVE mode
