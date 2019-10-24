@@ -160,6 +160,7 @@ parse_endpoint() {
     local host_col=$4
     local port_col=$5
     local index=1
+    export CURRENT_ENDPOINT_POSTFIX="${postfix}"
 
     eval "ENDPOINT_NAME${postfix}=()"
     eval "ENDPOINT_TOKEN${postfix}=()"
@@ -204,11 +205,11 @@ parse_endpoint() {
 # This will replace "@ENDPOINT1" in the SQL statement with the corresponding endpoint name
 # with postfix "1".
 sub_endpoint_name() {
-    local postfix=""
-    postfix="$(echo "$1" | sed 's/@ENDPOINT//')"
-    eval "local names=(\${ENDPOINT_NAME${postfix}[@]})"
-    eval "local hosts=(\"\${ENDPOINT_HOST${postfix}[@]}\")"
-    eval "ports=(\${ENDPOINT_PORT${postfix}[@]})"
+    export CURRENT_ENDPOINT_POSTFIX=""
+    CURRENT_ENDPOINT_POSTFIX="$(echo "$1" | sed 's/@ENDPOINT//')"
+    eval "local names=(\${ENDPOINT_NAME${CURRENT_ENDPOINT_POSTFIX}[@]})"
+    eval "local hosts=(\"\${ENDPOINT_HOST${CURRENT_ENDPOINT_POSTFIX}[@]}\")"
+    eval "ports=(\${ENDPOINT_PORT${CURRENT_ENDPOINT_POSTFIX}[@]})"
     local i=0
     for h in "${hosts[@]}" ; do
         if [ "$GP_HOSTNAME" = "$h" ] ; then
@@ -223,3 +224,20 @@ sub_endpoint_name() {
     echo $RAW_STR
 }
 
+# Return the retrieve token based on the $CURRENT_ENDPOINT_POSTFIX, $GP_HOSTNAME and $GP_PORT
+get_retrieve_token() {
+    eval "local tokens=(\${ENDPOINT_TOKEN${CURRENT_ENDPOINT_POSTFIX}[@]})"
+    eval "local hosts=(\"\${ENDPOINT_HOST${CURRENT_ENDPOINT_POSTFIX}[@]}\")"
+    eval "ports=(\${ENDPOINT_PORT${CURRENT_ENDPOINT_POSTFIX}[@]})"
+    local i=0
+    for h in "${hosts[@]}" ; do
+        if [ "$GP_HOSTNAME" = "$h" ] ; then
+            if [ "$GP_PORT" = "${ports[$i]}" ] ; then
+                echo "${tokens[$i]}"
+                return
+            fi
+        fi
+        i=$((i+1))
+    done
+    echo "CANNOT_FIND_TOKEN"
+}
