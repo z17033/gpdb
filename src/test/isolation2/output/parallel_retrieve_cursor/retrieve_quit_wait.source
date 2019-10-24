@@ -466,7 +466,6 @@ DECLARE
 
 -- Since retrieving session abort, waiting should be interrupted.
 1<:  <... completed>
-ERROR:  endpoint for 'c4' get aborted.
 ERROR:  canceling MPP operation: "Endpoint retrieve session quit, all unfinished endpoint backends will be cancelled"
 
 -- All endpoints should be removed since error happened.
