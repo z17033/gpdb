@@ -178,7 +178,6 @@ static void sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid
 /* utility */
 static void generate_endpoint_name(char *name, const char *cursorName,
 					   int32 sessionID);
-static void check_dispatch_connection(void);
 
 /* Endpoints internal operation UDF's helper function */
 static void session_info_clean_callback(XactEvent ev, void *vp);
@@ -734,11 +733,9 @@ wait_receiver(void)
 		if (QueryFinishPending)
 			break;
 
-		check_dispatch_connection();
-
 		elog(DEBUG5, "CDB_ENDPOINT: sender wait latch in wait_receiver()");
 		wr = WaitLatch(&activeSharedEndpoint->ackDone,
-					   WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT,
+					   WL_LATCH_SET | WL_ERROR_ON_LIBPQ_DEATH | WL_POSTMASTER_DEATH | WL_TIMEOUT,
 					   WAIT_NORMAL_TIMEOUT);
 		if (wr & WL_TIMEOUT)
 			continue;
@@ -897,11 +894,9 @@ wait_parallel_retrieve_close(void)
 		if (QueryFinishPending)
 			break;
 
-		check_dispatch_connection();
-
 		elog(DEBUG5, "CDB_ENDPOINT: wait for parallel retrieve cursor close");
 		wr = WaitLatch(&MyProc->procLatch,
-					   WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT,
+					   WL_LATCH_SET | WL_ERROR_ON_LIBPQ_DEATH | WL_POSTMASTER_DEATH | WL_TIMEOUT,
 					   WAIT_NORMAL_TIMEOUT);
 		if (wr & WL_TIMEOUT)
 			continue;
@@ -1138,37 +1133,6 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 	hex_encode((const char*)random, ENDPOINT_NAME_RANDOM_LEN / 2,
 			name + cursorLen + ENDPOINT_NAME_SESSIONID_LEN);
 	pfree(random);
-}
-
-/*
- * Check the QD dispatcher connection whether is lost
- */
-void
-check_dispatch_connection(void)
-{
-	unsigned char firstchar;
-	int			r;
-
-	pq_startmsgread();
-	r = pq_getbyte_if_available(&firstchar);
-	if (r < 0)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
-				 errmsg("unexpected EOF on query dispatcher connection")));
-	}
-	else if (r > 0)
-	{
-		ereport(ERROR, (errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
-						errmsg("query dispatcher should get nothing until QE "
-							   "backend finished processing")));
-	}
-	else
-	{
-		/* no data available without blocking */
-		pq_endmsgread();
-		/* continue processing as normal case */
-	}
 }
 
 /*

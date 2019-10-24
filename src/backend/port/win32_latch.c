@@ -122,6 +122,13 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 	if ((wakeEvents & WL_LATCH_SET) && latch->owner_pid != MyProcPid)
 		elog(ERROR, "cannot wait on a latch owned by another process");
 
+	if (wakeEvents & WL_ERROR_ON_LIBPQ_DEATH)
+	{
+		ereport(ERROR,
+		        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			        errmsg("The flag WL_ERROR_ON_LIBPQ_DEATH for WaitLatchOrSocket() on Windows is not supported.")));
+	}
+
 	/*
 	 * Initialize timeout if requested.  We must record the current time so
 	 * that we can determine the remaining timeout if WaitForMultipleObjects
