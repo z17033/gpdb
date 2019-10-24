@@ -160,28 +160,3 @@ RESET SESSION AUTHORIZATION;
 0Rq:
 1Rq:
 2Rq:
-
---------- Test5: u2 should NOT be able to check other u1's PARALLEL RETRIEVE CURSOR if it cannot access t1
---- c1 is declared by u1
-1: SET SESSION AUTHORIZATION u1;
-1: BEGIN;
-1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-
---- u2 cannot execute u1's cursor if it cannot access t1
-1: SET SESSION AUTHORIZATION u2;
-1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
-
-1: END;
-
---------- Test6: u2 should NOT be able to execute other u1's PARALLEL RETRIEVE CURSOR even when it can access t1
-1: SET SESSION AUTHORIZATION u1;
-1: BEGIN;
-1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-
----1: CHECK PARALLEL RETRIEVE CURSOR c1;
-1: SET SESSION AUTHORIZATION adminuser;
-1: GRANT ALL ON TABLE t1 TO u2;
-1: SET SESSION AUTHORIZATION u2;
-1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
-
-1: END;
