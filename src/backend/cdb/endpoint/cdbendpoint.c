@@ -683,8 +683,7 @@ init_session_info_entry(void)
 	if (!found)
 	{
 		/* Track userID in current transaction */
-		MemoryContext oldMemoryCtx = CurrentMemoryContext;
-		MemoryContextSwitchTo(TopMemoryContext);
+		MemoryContext oldMemoryCtx = MemoryContextSwitchTo(TopMemoryContext);
 		sessionUserList = lappend_oid(sessionUserList, GetUserId());
 		MemoryContextSwitchTo(oldMemoryCtx);
 	}
@@ -804,9 +803,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 		sessionInfoEntry =
 			hash_search(sharedSessionInfoHash, &tag, HASH_FIND, NULL);
 
-		/*
-		 * sessionInfoEntry may get removed. This means xact finished.
-		 */
+		/* sessionInfoEntry may get removed. This means xact finished. */
 		if (sessionInfoEntry)
 		{
 			cdb_sendAckMessageToQD(ENDPOINT_FINISHED_ACK);
@@ -842,8 +839,10 @@ endpoint_abort(void)
 	if (activeSharedEndpoint)
 	{
 		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-		/* These two better be called in one lock section.
-		 * So retriever abort will not execute extra works. */
+		/*
+		 * These two better be called in one lock section.
+		 * So retriever abort will not execute extra works.
+		 */
 		unset_endpoint_sender_pid(activeSharedEndpoint);
 		free_endpoint(activeSharedEndpoint);
 		LWLockRelease(ParallelCursorEndpointLock);
@@ -1278,8 +1277,11 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 void
 check_parallel_cursor_errors(EState *estate)
 {
+	CdbDispatcherState *ds;
+
 	Assert(estate);
-	CdbDispatcherState *ds = estate->dispatcherState;
+
+	ds = estate->dispatcherState;
 	/*
 	 * If QD, wait for QEs to finish and check their results.
 	 */

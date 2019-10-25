@@ -329,11 +329,13 @@ cdbdisp_dispatchToGang_async(struct CdbDispatcherState *ds,
 static bool
 cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait)
 {
-	Assert(ds != NULL);
 	DispatchWaitMode prevWaitMode;
+	CdbDispatchCmdAsync *pParms;
 	bool receivedAll = true;
-	CdbDispatchCmdAsync *pParms = (CdbDispatchCmdAsync *) ds->dispatchParams;
 
+	Assert(ds);
+
+	pParms = (CdbDispatchCmdAsync *) ds->dispatchParams;
 	/* cdbdisp_destroyDispatcherState is called */
 	if (pParms == NULL || message == NULL)
 		return false;
@@ -1139,14 +1141,14 @@ processResults(CdbDispatchResult *dispatchResult)
 				PG_RE_THROW();
 			}
 			PG_END_TRY();
-			/*
-			 * respond back on this libpq connection with the next value
-			 */
+			/* respond back on this libpq connection with the next value */
 			send_sequence_response(segdbDesc->conn, seq_oid, last, cached, increment, overflow, false /* error */);
 		}
 
-		/* retrieve acknowledge NOTIFY message form libpq. And put it to
-		 * dispatchResult->ackPGNotifies queue. */
+		/*
+		 * retrieve acknowledge NOTIFY message form libpq. And put it to
+		 * dispatchResult->ackPGNotifies queue.
+		 */
 		if (strcmp(qnotifies->relname, CDB_QE_ACKNOLEDGE_NOTIFY_CHANNEL) == 0)
 		{
 			qnotifies->next = (struct pgNotify *) dispatchResult->ackPGNotifies;

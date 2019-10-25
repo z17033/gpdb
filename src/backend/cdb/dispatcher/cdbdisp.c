@@ -430,12 +430,14 @@ cdbdisp_destroyDispatcherState(CdbDispatcherState *ds)
  *
  * QD use cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
  */
-void cdb_sendAckMessageToQD(const char *message)
+void
+cdb_sendAckMessageToQD(const char *message)
 {
+	StringInfoData buf;
+
 	Assert(Gp_role == GP_ROLE_EXECUTE);
 	Assert(message);
 	Assert(whereToSendOutput == DestRemote);
-	StringInfoData buf;
 
 	pq_beginmessage(&buf, 'A');
 	pq_sendint(&buf, MyProcPid, sizeof(int32));
