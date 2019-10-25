@@ -39,11 +39,6 @@
 #include "nodes/parsenodes.h"
 #include "tcop/dest.h"
 #include "storage/lwlock.h"
-#include "cdb/cdbdisp.h"
-
-
-/* ACK NOTICE MESSAGE FROM ENDPOINT QE/Entry DB to QD */
-#define ENDPOINT_READY_ACK "ENDPOINT_READY"
 
 /*
  * Roles that used in PARALLEL RETRIEVE CURSOR execution.
@@ -94,11 +89,6 @@ extern void WaitEndpointReady(EState *estate);
 extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName);
 extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest);
 
-/* UDFs for endpoints internal operation */
-extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
-extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
-
-
 /* cdbendpointretrieve.c */
 /*
  * Below functions should run on retrieve role backend.
@@ -107,15 +97,11 @@ extern bool AuthEndpoint(Oid userID, const char *tokenStr);
 extern TupleDesc GetRetrieveStmtTupleDesc(const RetrieveStmt *stmt);
 extern void ExecRetrieveStmt(const RetrieveStmt *stmt, DestReceiver *dest);
 
-
 /* cdbendpointutils.c */
 /* Utility functions */
 extern void SetParallelRtrvCursorExecRole(enum ParallelRtrvCursorExecRole role);
 extern void ClearParallelRtrvCursorExecRole(void);
 extern enum ParallelRtrvCursorExecRole GetParallelRtrvCursorExecRole(void);
 
-/* UDFs for endpoints info*/
-extern Datum gp_endpoints_info(PG_FUNCTION_ARGS);
-extern Datum gp_endpoints_status_info(PG_FUNCTION_ARGS);
 
 #endif   /* CDBENDPOINT_H */

@@ -130,6 +130,9 @@ typedef struct SessionInfoEntry
 	int8		token[ENDPOINT_TOKEN_LEN];
 }	SessionInfoEntry;
 
+extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
+extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
+
 /* Shared hash table for session infos */
 static HTAB *sharedSessionInfoHash = NULL;
 /* Track userIDs to clean up SessionInfoEntry */

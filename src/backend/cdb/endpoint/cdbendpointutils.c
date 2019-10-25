@@ -59,6 +59,9 @@ typedef struct
 	int			currentIdx;		/* current index of EndpointDesc in the list */
 }	EndpointsStatusInfo;
 
+extern Datum gp_endpoints_info(PG_FUNCTION_ARGS);
+extern Datum gp_endpoints_status_info(PG_FUNCTION_ARGS);
+
 /* Used in UDFs */
 static char *status_enum_to_string(enum AttachStatus status);
 static enum AttachStatus status_string_to_enum(const char *status);
