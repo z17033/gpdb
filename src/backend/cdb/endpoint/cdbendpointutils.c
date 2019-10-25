@@ -316,6 +316,7 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 		}
 		if (cnt != 0)
 		{
+			int idx = mystatus->status_num;
 			mystatus->status_num += cnt;
 			if (mystatus->status)
 			{
@@ -328,7 +329,6 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 				mystatus->status = (EndpointStatus *) palloc(
 							  sizeof(EndpointStatus) * mystatus->status_num);
 			}
-			int			idx = 0;
 
 			for (int i = 0; i < MAX_ENDPOINT_SIZE; i++)
 			{
@@ -336,13 +336,10 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 
 				if (!entry->empty)
 				{
-					EndpointStatus *status =
-					&mystatus->status[mystatus->status_num - cnt + idx];
+					EndpointStatus *status = &mystatus->status[idx];
 
-					StrNCpy(mystatus->status[idx].name, entry->name,
-							ENDPOINT_NAME_LEN);
-					StrNCpy(mystatus->status[idx].cursorName, entry->cursorName,
-							NAMEDATALEN);
+					StrNCpy(status->name, entry->name, ENDPOINT_NAME_LEN);
+					StrNCpy(status->cursorName, entry->cursorName, NAMEDATALEN);
 					get_token_by_session_id(entry->sessionID, entry->userID,
 											status->token);
 					status->dbid = contentid_get_dbid(
