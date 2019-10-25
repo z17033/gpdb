@@ -928,8 +928,6 @@ free_endpoint(volatile EndpointDesc * endpoint)
 
 	endpoint->databaseID = InvalidOid;
 	endpoint->mqDsmHandle = DSM_HANDLE_INVALID;
-	endpoint->sessionID = InvalidSession;
-	endpoint->userID = InvalidOid;
 	endpoint->empty = true;
 	memset((char *) endpoint->name, '\0', ENDPOINT_NAME_LEN);
 	ResetLatch(&endpoint->ackDone);
@@ -944,6 +942,9 @@ free_endpoint(volatile EndpointDesc * endpoint)
 	if (infoEntry) {
 		infoEntry->endpointCounter--;
 	}
+
+	endpoint->sessionID = InvalidSession;
+	endpoint->userID = InvalidOid;
 }
 
 /*
@@ -1155,8 +1156,7 @@ void
 session_info_clean_callback(XactEvent ev, void *vp)
 {
 	if ((ev == XACT_EVENT_COMMIT || ev == XACT_EVENT_PARALLEL_COMMIT ||
-		 ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT) &&
-		(Gp_is_writer || Gp_role == GP_ROLE_DISPATCH))
+		 ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT))
 	{
 		elog(DEBUG3,
 			 "CDB_ENDPOINT: session_info_clean_callback clean token for session %d",
