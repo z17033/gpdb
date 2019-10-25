@@ -105,21 +105,24 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds)
 }
 
 /*
- * cdbdisp_waitDispatchAckMessage:
+ * cdbdisp_checkDispatchAckMessage:
  *
- * Wait for acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
+ * On QD check acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
  *
- * In some cases, QD needs wait and receive acknowledge message from QEs. So QD
- * knows QE runs expectantly.
+ * In some cases, QD needs wait/check the received acknowledge message from QEs.
+ * So QD knows QE runs expectantly.
+ *
  * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
+ *
+ * wait: if true, wait until required ack message is received from all QEs.
  */
 bool
-cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds,
+cdbdisp_checkDispatchAckMessage(struct CdbDispatcherState *ds,
 							   const char *message, bool wait)
 {
-	if (pDispatchFuncs == NULL || pDispatchFuncs->waitAckMessage == NULL)
+	if (pDispatchFuncs == NULL || pDispatchFuncs->checkAckMessage == NULL)
 		return false;
-	return (pDispatchFuncs->waitAckMessage) (ds, message, wait);
+	return (pDispatchFuncs->checkAckMessage) (ds, message, wait);
 }
 
 /*

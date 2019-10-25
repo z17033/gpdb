@@ -52,7 +52,7 @@ typedef struct DispatcherInternalFuncs
 	bool (*checkForCancel)(struct CdbDispatcherState *ds);
 	int (*getWaitSocketFd)(struct CdbDispatcherState *ds);
 	void* (*makeDispatchParams)(int maxSlices, int largestGangSize, char *queryText, int queryTextLen);
-	bool (*waitAckMessage)(struct CdbDispatcherState *ds, const char* message, bool wait);
+	bool (*checkAckMessage)(struct CdbDispatcherState *ds, const char* message, bool wait);
 	void (*checkResults)(struct CdbDispatcherState *ds, DispatchWaitMode waitMode);
 	void (*dispatchToGang)(struct CdbDispatcherState *ds, struct Gang *gp, int sliceIndex);
 	void (*waitDispatchFinish)(struct CdbDispatcherState *ds);
@@ -103,17 +103,20 @@ void
 cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds);
 
 /*
- * cdbdisp_waitDispatchAckMessage:
+ * cdbdisp_checkDispatchAckMessage:
  *
- * Wait for acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
+ * On QD check acknowledge NOTIFY message form QEs after cdbdisp_dispatchToGang().
  *
- * In some cases, QD needs wait and receive acknowledge message from QEs. So QD
- * knows QE runs expectantly.
+ * In some cases, QD needs wait/check the received acknowledge message from QEs.
+ * So QD knows QE runs expectantly.
+ *
  * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
+ *
+ * wait: if true, wait until required ack message is received from all QEs.
  */
 bool
-cdbdisp_waitDispatchAckMessage(struct CdbDispatcherState *ds, const char *message,
-							   bool wait);
+cdbdisp_checkDispatchAckMessage(struct CdbDispatcherState *ds, const char *message,
+								bool wait);
 
 /*
  * CdbCheckDispatchResult:
@@ -176,7 +179,7 @@ void cdbdisp_destroyDispatcherState(CdbDispatcherState *ds);
 /*
  * cdb_sendAckMessageToQD - send acknowledge message to QD(runs on QE).
  *
- * QD use cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
+ * QD use cdbdisp_checkDispatchAckMessage to wait QE acknowledge message.
  */
 void cdb_sendAckMessageToQD(const char *message);
 

@@ -90,7 +90,7 @@ typedef struct CdbDispatchCmdAsync
 
 static void *cdbdisp_makeDispatchParams_async(int maxSlices, int largestGangSize, char *queryText, int len);
 
-static bool cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait);
+static bool cdbdisp_checkAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait);
 
 static void cdbdisp_checkDispatchResult_async(struct CdbDispatcherState *ds,
 								  DispatchWaitMode waitMode);
@@ -108,7 +108,7 @@ DispatcherInternalFuncs DispatcherAsyncFuncs =
 	cdbdisp_checkForCancel_async,
 	cdbdisp_getWaitSocketFd_async,
 	cdbdisp_makeDispatchParams_async,
-	cdbdisp_waitAckMessage_async,
+	cdbdisp_checkAckMessage_async,
 	cdbdisp_checkDispatchResult_async,
 	cdbdisp_dispatchToGang_async,
 	cdbdisp_waitDispatchFinish_async
@@ -320,14 +320,18 @@ cdbdisp_dispatchToGang_async(struct CdbDispatcherState *ds,
 }
 
 /*
- * Wait for acknowledge NOTIFY message form QEs.
+ * Check for acknowledge NOTIFY message form QEs.
  *
- * Wait all dispatch connection to get back specified acknowledge message,
- * either success or fail. (Set stillRunning to true when
- * one dispatch work is completed)
+ * Check all dispatch connection to get back specified acknowledge message. (Set
+ * stillRunning to true when one dispatch work is completed)
+ *
+ * Return true means receive all QEs' acknowledge NOTIFY message.
+ *
+ * wait: true means wait until received all QEs' acknowledge NOTIFY message.
+ * Either success or fail.
  */
 static bool
-cdbdisp_waitAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait)
+cdbdisp_checkAckMessage_async(struct CdbDispatcherState *ds, const char *message, bool wait)
 {
 	DispatchWaitMode prevWaitMode;
 	CdbDispatchCmdAsync *pParms;

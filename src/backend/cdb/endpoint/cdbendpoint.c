@@ -213,9 +213,9 @@ EndpointCTXShmemInit(void)
 	HASHCTL		hctl;
 
 	sharedEndpoints = (EndpointDesc *) ShmemInitStruct(
-													 SHMEM_ENDPOINTS_ENTRIES,
-				 MAXALIGN(mul_size(MAX_ENDPOINT_SIZE, sizeof(EndpointDesc))),
-													   &isShmemReady);
+		SHMEM_ENDPOINTS_ENTRIES,
+		MAXALIGN(mul_size(MAX_ENDPOINT_SIZE, sizeof(EndpointDesc))),
+		&isShmemReady);
 	Assert(isShmemReady || !IsUnderPostmaster);
 	if (!isShmemReady)
 	{
@@ -352,7 +352,7 @@ WaitEndpointReady(EState *estate)
 	Assert(estate);
 	CdbDispatcherState* ds = estate->dispatcherState;
 
-	cdbdisp_waitDispatchAckMessage(ds, ENDPOINT_READY_ACK, true);
+	cdbdisp_checkDispatchAckMessage(ds, ENDPOINT_READY_ACK, true);
 	check_parallel_cursor_errors(estate);
 }
 
@@ -1168,7 +1168,6 @@ session_info_clean_callback(XactEvent ev, void *vp)
 			LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 			foreach(cell, sessionUserList)
 			{
-				bool find = false;
 				SessionTokenTag tag;
 
 				/*
@@ -1179,10 +1178,10 @@ session_info_clean_callback(XactEvent ev, void *vp)
 				tag.userID = lfirst_oid(cell);
 
 				SessionInfoEntry *infoEntry = (SessionInfoEntry *) hash_search(
-					sharedSessionInfoHash, &tag, HASH_FIND, &find);
+					sharedSessionInfoHash, &tag, HASH_FIND, NULL);
 				if (infoEntry && infoEntry->endpointCounter <= 0)
 				{
-					hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, &find);
+					hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, NULL);
 					elog(DEBUG3,
 						 "CDB_ENDPOINT: session_info_clean_callback removes exists entry for "
 						 "user id: %d, session: %d",
@@ -1271,7 +1270,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 		return false;
 	}
 	estate = portal->queryDesc->estate;
-	retVal = cdbdisp_waitDispatchAckMessage(estate->dispatcherState, ENDPOINT_FINISHED_ACK, isWait);
+	retVal = cdbdisp_checkDispatchAckMessage(estate->dispatcherState, ENDPOINT_FINISHED_ACK, isWait);
 
 #ifdef FAULT_INJECTOR
 	HOLD_INTERRUPTS();
