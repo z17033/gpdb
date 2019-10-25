@@ -128,6 +128,8 @@ typedef struct SessionInfoEntry
 
 	/* The auth token for this session. */
 	int8		token[ENDPOINT_TOKEN_LEN];
+	/* How many endpoint are refered to this entry. */
+	uint16      endpointCounter;
 }	SessionInfoEntry;
 
 extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
@@ -361,7 +363,7 @@ WaitEndpointReady(EState *estate)
  * retriever will know which session to attach when doing authentication.
  */
 const int8 *
-get_or_create_token()
+get_or_create_token(void)
 {
 #ifdef HAVE_STRONG_RANDOM
 	static int	sessionId = InvalidSession;
@@ -688,7 +690,9 @@ init_session_info_entry(void)
 
 		token = get_or_create_token();
 		memcpy(infoEntry->token, token, ENDPOINT_TOKEN_LEN);
+		infoEntry->endpointCounter = 0;
 	}
+	infoEntry->endpointCounter++;
 	/*
 	 * Overwrite exists token in case the wrapped session id entry not get
 	 * removed For example, 1 hours ago, a session 7 exists and have entry
@@ -914,6 +918,9 @@ wait_parallel_retrieve_close(void)
 void
 free_endpoint(volatile EndpointDesc * endpoint)
 {
+	SessionTokenTag tag;
+	SessionInfoEntry *infoEntry = NULL;
+
 	Assert(endpoint);
 	Assert(!endpoint->empty);
 
@@ -927,6 +934,16 @@ free_endpoint(volatile EndpointDesc * endpoint)
 	memset((char *) endpoint->name, '\0', ENDPOINT_NAME_LEN);
 	ResetLatch(&endpoint->ackDone);
 	DisownLatch(&endpoint->ackDone);
+
+	tag.sessionID = endpoint->sessionID;
+	tag.userID = endpoint->userID;
+	infoEntry = (SessionInfoEntry *) hash_search(
+		sharedSessionInfoHash, &tag, HASH_FIND, NULL);
+	Assert(infoEntry);
+	Assert(infoEntry->endpointCounter > 0);
+	if (infoEntry) {
+		infoEntry->endpointCounter--;
+	}
 }
 
 /*
@@ -1161,9 +1178,11 @@ session_info_clean_callback(XactEvent ev, void *vp)
 				tag.sessionID = EndpointCtl.sessionID;
 				tag.userID = lfirst_oid(cell);
 
-				hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, &find);
-				if (find)
+				SessionInfoEntry *infoEntry = (SessionInfoEntry *) hash_search(
+					sharedSessionInfoHash, &tag, HASH_FIND, &find);
+				if (infoEntry && infoEntry->endpointCounter <= 0)
 				{
+					hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, &find);
 					elog(DEBUG3,
 						 "CDB_ENDPOINT: session_info_clean_callback removes exists entry for "
 						 "user id: %d, session: %d",
