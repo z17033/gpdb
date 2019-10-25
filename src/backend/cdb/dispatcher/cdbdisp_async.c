@@ -673,6 +673,9 @@ dispatchCommand(CdbDispatchResult *dispatchResult,
 
 /*
  * Helper function to check whether specified acknowledge message is received.
+ *
+ * Check whether the current required acknowledge message is already received
+ * in the ackPGNotifies queue.
  */
 static bool
 isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message)
