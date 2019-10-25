@@ -137,7 +137,7 @@ static void
 			handlePollSuccess(CdbDispatchCmdAsync *pParms, struct pollfd *fds);
 
 static bool
-			isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message);
+			checkAckMessage(CdbDispatchResult *dispatchResult, const char *message);
 
 /*
  * Check dispatch result.
@@ -500,7 +500,7 @@ checkDispatchResult(CdbDispatcherState *ds,
 				continue;
 
 			if (pParms->waitMode == DISPATCH_WAIT_ACK_MESSAGE &&
-				isReceiveAckMessage(dispatchResult, pParms->ackMessage))
+				checkAckMessage(dispatchResult, pParms->ackMessage))
 				continue;
 
 			Assert(!cdbconn_isBadConnection(segdbDesc));
@@ -592,7 +592,7 @@ checkDispatchResult(CdbDispatcherState *ds,
 		/* If the time limit expires, poll() returns 0 */
 		else if (n == 0)
 		{
-			if (pParms->waitMode != DISPATCH_WAIT_NONE&&
+			if (pParms->waitMode != DISPATCH_WAIT_NONE &&
 				pParms->waitMode != DISPATCH_WAIT_ACK_MESSAGE)
 			{
 				signalQEs(pParms);
@@ -674,13 +674,14 @@ dispatchCommand(CdbDispatchResult *dispatchResult,
 }
 
 /*
- * Helper function to check whether specified acknowledge message is received.
+ * Helper function to check whether specified acknowledge message has been
+ * received.
  *
  * Check whether the current required acknowledge message is already received
  * in the ackPGNotifies queue.
  */
 static bool
-isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message)
+checkAckMessage(CdbDispatchResult *dispatchResult, const char *message)
 {
 	bool received = false;
 	PGnotify* ackNotifies = (PGnotify *) dispatchResult->ackPGNotifies;
@@ -689,19 +690,17 @@ isReceiveAckMessage(CdbDispatchResult *dispatchResult, const char *message)
 		elog(ERROR, "Notify ACK message is required.");
 
 	if (dispatchResult->receivedAckMsg)
-		return dispatchResult->receivedAckMsg;
+		return true;
 
 	while (ackNotifies)
 	{
-		PGnotify* temp;
 		if (strcmp(ackNotifies->extra, message) == 0)
 		{
 			received = true;
 			dispatchResult->receivedAckMsg = true;
 			break;
 		}
-		temp = ackNotifies;
-		ackNotifies = temp->next;
+		ackNotifies = ackNotifies->next;
 	}
 	return received;
 }

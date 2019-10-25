@@ -155,30 +155,6 @@ cdbdisp_checkDispatchResult(struct CdbDispatcherState *ds,
 }
 
 /*
- * Check whether or not the PARALLEL RETRIEVE CURSOR Execution Finished
- * This func should be called after calling cdbdisp_checkDispatchResult().
- *
- * @return true if the PARALLEL RETRIEVE CURSOR Execution Finished
- */
-bool
-cdbdisp_isDispatchFinished(struct CdbDispatcherState *ds)
-{
-    CdbDispatchResults *results = ds->primaryResults;
-    if (results != NULL && results->resultArray != NULL)
-    {
-		int			i;
-
-		for (i = 0; i < results->resultCount; i++)
-		{
-			if(results->resultArray[i].stillRunning)
-				return false;
-		}
-    }
-
-    return true;
-}
-
-/*
  * cdbdisp_getDispatchResults:
  *
  * Block until all QEs return results or report errors.
@@ -428,7 +404,7 @@ cdbdisp_destroyDispatcherState(CdbDispatcherState *ds)
 /*
  * cdb_sendAckMessageToQD - send acknowledge message to QD(runs on QE).
  *
- * QD use cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
+ * QD uses cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
  */
 void
 cdb_sendAckMessageToQD(const char *message)
