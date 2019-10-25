@@ -1819,13 +1819,15 @@ DECLARE
 ------------------------------------
  token21a
 (1 row)
--- Declare the 2nd cursor in the same session should not change the first one's token
-1: DECLARE c21b PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
+-- Declare more cursors in the same session should not change the first one's token
+1: DECLARE c21b PARALLEL RETRIEVE CURSOR FOR SELECT COUNT(*) from t1;
+DECLARE
+1: DECLARE c21c PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
 DECLARE
 1: SELECT token FROM gp_endpoints_info(true) WHERE cursorname='c21a';
  token                              
 ------------------------------------
- token21a
+ token21a 
 (1 row)
 1: COMMIT;
 COMMIT

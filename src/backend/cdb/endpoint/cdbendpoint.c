@@ -151,8 +151,8 @@ static dsm_segment *activeDsmSeg = NULL;
 /* Init helper functions */
 static void init_shared_endpoints(void *address);
 
-/* QD utility functions */
-static const int8 *get_or_create_token_on_qd(void);
+/* Token utility functions */
+static const int8 *get_or_create_token(void);
 
 /* Endpoint helper function */
 static EndpointDesc *alloc_endpoint(const char *cursorName, dsm_handle dsmHandle);
@@ -361,7 +361,7 @@ WaitEndpointReady(EState *estate)
  * retriever will know which session to attach when doing authentication.
  */
 const int8 *
-get_or_create_token_on_qd()
+get_or_create_token()
 {
 #ifdef HAVE_STRONG_RANDOM
 	static int	sessionId = InvalidSession;
@@ -663,16 +663,12 @@ init_session_info_entry(void)
 	bool				 found = false;
 	SessionTokenTag		 tag;
 	const int8			*token = NULL;
-	char				*tokenStr;
 
 	tag.sessionID	= gp_session_id;
 	tag.userID		= GetUserId();
 
 	/* track current session id for session_info_clean_callback  */
 	EndpointCtl.sessionID = gp_session_id;
-
-	token = get_or_create_token_on_qd();
-	tokenStr = print_token(token);
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 	infoEntry = (SessionInfoEntry *) hash_search(sharedSessionInfoHash, &tag,
@@ -689,6 +685,9 @@ init_session_info_entry(void)
 		MemoryContext oldMemoryCtx = MemoryContextSwitchTo(TopMemoryContext);
 		sessionUserList = lappend_oid(sessionUserList, GetUserId());
 		MemoryContextSwitchTo(oldMemoryCtx);
+
+		token = get_or_create_token();
+		memcpy(infoEntry->token, token, ENDPOINT_TOKEN_LEN);
 	}
 	/*
 	 * Overwrite exists token in case the wrapped session id entry not get
@@ -697,12 +696,7 @@ init_session_info_entry(void)
 	 * session_info_clean_callback. Now current session is session 7 again.
 	 * Here need to overwrite the old token.
 	 */
-	memcpy(infoEntry->token, token, ENDPOINT_TOKEN_LEN);
-	elog(DEBUG3, "CDB_ENDPOINT: set new token %s, for session %d", tokenStr,
-		 gp_session_id);
 	LWLockRelease(ParallelCursorEndpointLock);
-
-	pfree(tokenStr);
 }
 
 /*

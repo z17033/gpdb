@@ -355,7 +355,8 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: BEGIN;
 1: DECLARE c21a PARALLEL RETRIEVE CURSOR FOR SELECT COUNT(*) from t1;
 1: @out_sh 'get_cell TOKEN21a 3 1 ; match_sub $TOKEN21a token21a' : SELECT token FROM gp_endpoints_info(true) WHERE cursorname='c21a';
--- Declare the 2nd cursor in the same session should not change the first one's token
-1: DECLARE c21b PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
+-- Declare more cursors in the same session should not change the first one's token
+1: DECLARE c21b PARALLEL RETRIEVE CURSOR FOR SELECT COUNT(*) from t1;
+1: DECLARE c21c PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
 1: SELECT token FROM gp_endpoints_info(true) WHERE cursorname='c21a';
 1: COMMIT;
