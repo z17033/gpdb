@@ -946,8 +946,6 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 		 */
 		exec_identity = getGpExecIdentity(queryDesc, direction, estate);
 
-
-
 		if (exec_identity == GP_IGNORE)
 		{
 			/* do nothing */
@@ -1023,7 +1021,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
     }
 	PG_CATCH();
 	{
-		/* If EXPLAIN ANALYZE, let qExec try to return stats to qDisp. */
+        /* If EXPLAIN ANALYZE, let qExec try to return stats to qDisp. */
         if (estate->es_sliceTable &&
             estate->es_sliceTable->instrument_options &&
             (estate->es_sliceTable->instrument_options & INSTRUMENT_CDB) &&
