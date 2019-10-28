@@ -83,7 +83,7 @@ gp_endpoints_info Columns:
 |-------------+-----------+------------------------------------------|
 | dbid        | integer   | The QE's segment id                      |
 |-------------+-----------+------------------------------------------|
-| usreid      | oid       | The user who created this endpoint       |
+| userid      | oid       | The user who created this endpoint       |
 |-------------+-----------+------------------------------------------|
 | status      | text      | One of the following status for this     |
 |             |           | endpoint:                                |
@@ -202,7 +202,7 @@ gp_endpoints_status_info Columns:
 |--------------+-----------+------------------------------------------|
 | sessionid    | integer   | The session where the cursor created in  |
 |--------------+-----------+------------------------------------------|
-| usreid       | oid       | The user who created this endpoint       |
+| userid       | oid       | The user who created this endpoint       |
 |--------------+-----------+------------------------------------------|
 | endpointname | text      | The identification of this endpoint      |
 |--------------+-----------+------------------------------------------|

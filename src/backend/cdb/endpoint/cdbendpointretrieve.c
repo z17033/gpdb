@@ -8,26 +8,26 @@
  *
  * To start a retrieve session, the endpoint's token is needed as the password for
  * authentication. The user should be the same as the one who declares the
- * parallel retrieve cursor. Also a runtime parameter gp_session_rol=retrieve
+ * parallel retrieve cursor. Also a runtime parameter gp_session_role=retrieve
  * needs to be set to start the session. As long as login succeeds, the retrieve
  * session will be able to retrieve from all endpoints which have the same token.
  * Call AuthEndpoint() with user and token to do the retrieve authentication.
  *
  * To start retrieving from an endpoint, call GetRetrieveStmtTupleDesc() to obtain
- * a TupleDesc first. The function attachs the current retrieve session to the
- * given endpoint and connect to the shared message queue as receiver with
+ * a TupleDesc first. The function attaches the current retrieve session to the
+ * given endpoint and connects to the shared message queue as receiver with
  * TupleQueueReader.
  *
  * To retrieve, call ExecRetrieveStmt(). It reads tuples from the shared message
- * queue and write them into the given DestReceiver. If no more tuples left an
- * empty result set will be returned.
+ * queue and writes them into the given DestReceiver. If no more tuples are left,
+ * an empty result set is returned.
  *
- * Once a endpoint is attached to a retrieve session, it cannot be attached to
- * other retrieve sessions. That means the RETRIEVE statement on the same endpoint
- * cannot be called on more than one retrieve sessions.
+ * Once a retrieve session has attached to an endpoint, no other retrieve session
+ * can attach to that endpoint.
  *
  * It is possible to retrieve multiple endpoints from the same retrieve session if
- * they share the same token.
+ * they share the same token. In other words, one retrieve session can attach and
+ * retrieve from multiple endpoints.
  *
  * Copyright (c) 2019-Present Pivotal Software, Inc.
  *
@@ -251,7 +251,7 @@ ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
  * be called 2 times.
  */
 dsm_handle
-attach_endpoint(MsgQueueStatusEntry * entry)
+attach_endpoint(MsgQueueStatusEntry *entry)
 {
 	const char *endpointName = entry->endpointName;
 	pid_t		attachedPid = InvalidPid;

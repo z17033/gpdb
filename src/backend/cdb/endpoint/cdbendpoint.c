@@ -11,12 +11,12 @@
  * RETRIEVE CURSOR:
  * (1) An endpoint is on QD only if the query of the parallel cursor needs to be
  *	   finally gathered by the master. e.g.:
- * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 ORDER BY C1;
+ * > DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 ORDER BY C1;
  * (2) The endpoints are on specific segments node if the direct dispatch happens.
  *	   e.g.:
- * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 WHERE C1=1 OR C1=2;
+ * > DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1 WHERE C1=1 OR C1=2;
  * (3) The endpoints are on all segments node. e.g:
- * > DECLCARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1;
+ * > DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1;
  *
  * When a parallel retrieve cusor is declared, the query plan will be dispatched
  * to the corresponding QEs. Before the query execution, endpoints will be
@@ -40,7 +40,7 @@
  * tokens same for all endpoints in the same session. The token is created on
  * each QE after plan get dispatched.
  *
- * DECLCARE returns only when endpoint and token are ready and query starts
+ * DECLARE returns only when endpoint and token are ready and query starts
  * execution. See WaitEndpointReady().
  *
  * When the query finishes, the endpoint won't be destroyed immediately since we
