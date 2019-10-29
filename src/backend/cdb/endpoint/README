@@ -66,6 +66,10 @@ When is_for_all_session is false, only parallel retrieve cursors created in
 current session will be listed. Otherwise, all parallel retrieve
 cursors will be listed.
 
+For a superuser, it can list all endpoints info of all users', but for
+non-superuser, it can only list the current user's endpoints info for
+security reason.
+
 gp_endpoints_info Columns:
 |-------------+-----------+------------------------------------------|
 | Column Name | Data Type | Description                              |
@@ -170,11 +174,14 @@ postgres=# RETRIEVE ALL FROM ENDPOINT c1_00001507_00000000;
 (2 rows)
 
 
-List Endpoints In Utility Mode
-==============================
+List Endpoints In Utility Session On Endpoint QE
+================================================
 
-It is possible to list all endpoints status on current segment by using
-UDF "gp_endpoints_status_info()" in utility mode.
+It is possible to list all sessions' endpoints status in the UTILITY
+connection to specific endpoint (master or segment node) by using UDF
+"gp_endpoints_status_info()". Same as the UDF gp_endpoints_info(true),
+for a superuser, he can see all endpoints info of all users', but for
+non-superuser, he can only see his endpoints info for security reason.
 
 Syntax:
 gp_endpoints_status_info()
