@@ -66,7 +66,6 @@
 
 #include "access/tupdesc.h"
 #include "access/xact.h"
-#include "assert.h"
 #include "cdb/cdbdisp_query.h"
 #include "cdb/cdbdispatchresult.h"
 #include "cdb/cdbendpoint.h"
@@ -132,11 +131,6 @@ typedef struct SessionInfoEntry
 	/* How many endpoint are refered to this entry. */
 	uint16      endpointCounter;
 }	SessionInfoEntry;
-
-static_assert(
-	PG_UINT16_MAX > MAX_ENDPOINT_SIZE,
-	"To avoid counter wrapped, the max value of SessionInfoEntry.endpointCounter "
-	"has to be bigger than MAX_ENDPOINT_SIZE");
 
 extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
@@ -696,6 +690,17 @@ init_session_info_entry(void)
 
 		token = get_or_create_token();
 		memcpy(infoEntry->token, token, ENDPOINT_TOKEN_LEN);
+
+		{
+			/*
+			 * To avoid counter wrapped, the max value of
+			 * SessionInfoEntry.endpointCounter has to be bigger than
+			 * MAX_ENDPOINT_SIZE.
+			 */
+			infoEntry->endpointCounter = -1;
+			Assert(infoEntry->endpointCounter > MAX_ENDPOINT_SIZE);
+		}
+
 		infoEntry->endpointCounter = 0;
 	}
 	infoEntry->endpointCounter++;
