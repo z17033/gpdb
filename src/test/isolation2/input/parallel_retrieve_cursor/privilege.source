@@ -27,7 +27,7 @@ RESET SESSION AUTHORIZATION;
 1: SELECT SESSION_USER, CURRENT_USER;
 1: BEGIN;
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-1: @out_sh 'parse_endpoint 1 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
+1: @out_sh 'parse_endpoint 1 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c1';
 1: SET SESSION AUTHORIZATION u1;
 1: SELECT SESSION_USER, CURRENT_USER;
 --- c2 is declared by u1
@@ -127,15 +127,15 @@ RESET SESSION AUTHORIZATION;
 1: BEGIN;
 -- Used to let super login to retrieve session so then it can change user in session.
 1: DECLARE c0 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-1: @out_sh 'parse_endpoint 50 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c0';
+1: @out_sh 'parse_endpoint 50 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c0';
 1: SET SESSION AUTHORIZATION u1;
 --- c4 is declared and executed by u1
 1: DECLARE c4 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
-1: @out_sh 'parse_endpoint 5 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c4';
+1: @out_sh 'parse_endpoint 5 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c4';
 
 --- u2 is not able to see u1's endpoints on master
 1: SET SESSION AUTHORIZATION u2;
-1: SELECT * from gp_endpoints_info(true);
+1: SELECT * from GP_ENDPOINTS;
 
 --- execute the cursor by u1
 1: SET SESSION AUTHORIZATION u1;
@@ -160,3 +160,13 @@ RESET SESSION AUTHORIZATION;
 0Rq:
 1Rq:
 2Rq:
+
+--------- Test5: UDF GP_ENDPOINTS_INFO(TRUE) must be called by superuser
+1: SET SESSION AUTHORIZATION adminuser;
+1: SELECT SESSION_USER, CURRENT_USER;
+1: BEGIN;
+1: SET SESSION AUTHORIZATION u1;
+1: DECLARE c5 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
+1: SELECT count(*) FROM GP_ENDPOINTS_INFO(FALSE);
+1: SELECT * FROM GP_ENDPOINTS_INFO(TRUE);
+1q:

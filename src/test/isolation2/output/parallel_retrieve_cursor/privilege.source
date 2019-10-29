@@ -58,7 +58,7 @@ SET
 BEGIN
 1: DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
 DECLARE
-1: @out_sh 'parse_endpoint 1 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c1';
+1: @out_sh 'parse_endpoint 1 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c1';
  endpoint_id1_1 | token_id | host_id | port_id | READY
  endpoint_id1_2 | token_id | host_id | port_id | READY
  endpoint_id1_3 | token_id | host_id | port_id | READY
@@ -312,7 +312,7 @@ BEGIN
 -- Used to let super login to retrieve session so then it can change user in session.
 1: DECLARE c0 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
 DECLARE
-1: @out_sh 'parse_endpoint 50 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c0';
+1: @out_sh 'parse_endpoint 50 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c0';
  endpoint_id50_1 | token_id | host_id | port_id | READY
  endpoint_id50_2 | token_id | host_id | port_id | READY
  endpoint_id50_3 | token_id | host_id | port_id | READY
@@ -322,7 +322,7 @@ SET
 --- c4 is declared and executed by u1
 1: DECLARE c4 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
 DECLARE
-1: @out_sh 'parse_endpoint 5 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c4';
+1: @out_sh 'parse_endpoint 5 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM GP_ENDPOINTS WHERE cursorname='c4';
  endpoint_id5_1 | token_id | host_id | port_id | READY
  endpoint_id5_2 | token_id | host_id | port_id | READY
  endpoint_id5_3 | token_id | host_id | port_id | READY
@@ -331,7 +331,7 @@ DECLARE
 --- u2 is not able to see u1's endpoints on master
 1: SET SESSION AUTHORIZATION u2;
 SET
-1: SELECT * from gp_endpoints_info(true);
+1: SELECT * from GP_ENDPOINTS;
  token | cursorname | sessionid | hostname | port | dbid | userid | status | endpointname 
 -------+------------+-----------+----------+------+------+--------+--------+--------------
 (0 rows)
@@ -407,3 +407,26 @@ END
 0Rq: ... <quitting>
 1Rq: ... <quitting>
 2Rq: ... <quitting>
+
+--------- Test5: UDF GP_ENDPOINTS_INFO(TRUE) must be called by superuser
+1: SET SESSION AUTHORIZATION adminuser;
+SET
+1: SELECT SESSION_USER, CURRENT_USER;
+ session_user | current_user 
+--------------+--------------
+ adminuser    | adminuser    
+(1 row)
+1: BEGIN;
+BEGIN
+1: SET SESSION AUTHORIZATION u1;
+SET
+1: DECLARE c5 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
+DECLARE
+1: SELECT count(*) FROM GP_ENDPOINTS_INFO(FALSE);
+ count 
+-------
+ 3     
+(1 row)
+1: SELECT * FROM GP_ENDPOINTS_INFO(TRUE);
+ERROR:  must be superuser to call 'GP_ENDPOINTS_INFO(TRUE)'
+1q: ... <quitting>
