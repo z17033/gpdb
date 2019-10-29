@@ -360,3 +360,40 @@ INSERT INTO t5 SELECT GENERATE_SERIES(1, 10);
 1: DECLARE c21c PARALLEL RETRIEVE CURSOR FOR SELECT * from t1;
 1: SELECT token FROM gp_endpoints_info(true) WHERE cursorname='c21a';
 1: COMMIT;
+1q:
+-1Rq:
+0Rq:
+1Rq:
+2Rq:
+
+-- Test22: UDF plan should be able to run on entry db.
+1: BEGIN;
+1: DECLARE c22 PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM generate_series(1,10);
+1: @out_sh 'parse_endpoint 22 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c22';
+1: SELECT * FROM gp_check_parallel_retrieve_cursor('c22');
+
+*U: @in_sh 'sub_endpoint_name @ENDPOINT22': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT22';
+*R: @in_sh 'sub_endpoint_name @ENDPOINT22': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT22";
+
+-- test check and wait after finished retrieving
+1: SELECT * FROM gp_wait_parallel_retrieve_cursor('c22');
+-- check no endpoint info
+1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c22';
+1: ROLLBACK;
+1q:
+-1Rq:
+
+
+-- Test23: Catalog scan plan should be able to run on entry db.
+1: BEGIN;
+1: DECLARE c23 PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT relname FROM pg_class where relname='pg_class';
+1: @out_sh 'parse_endpoint 23 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c23';
+1: SELECT * FROM gp_check_parallel_retrieve_cursor('c23');
+
+*U: @in_sh 'sub_endpoint_name @ENDPOINT23': SELECT status FROM GP_ENDPOINTS_STATUS_INFO() WHERE endpointname='@ENDPOINT23';
+*R: @in_sh 'sub_endpoint_name @ENDPOINT23': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT23";
+
+-- test check and wait after finished retrieving
+1: SELECT * FROM gp_wait_parallel_retrieve_cursor('c23');
+-- check no endpoint info
+1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c23';

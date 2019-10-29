@@ -273,8 +273,13 @@ cdbparallelize(PlannerInfo *root, Plan *plan, bool *needToAssignDirectDispatchCo
 	 * Mark the root plan to DISPATCH_PARALLEL if prescan() says it is
 	 * parallel. Each init plan has its own flag to indicate
 	 * whether it's a parallel plan.
+	 *
+	 * PARALLEL RETRIEVE CURSOR plan should always get dispatched. At least
+	 * dispatch to entry DB. For example, UDFs' and catalog tables' scan plans
+	 * may not need dispatch to QEs. But for PARALLEL RETRIEVE CURSOR, we dispatch
+	 * these plans to entry DB.
 	 */
-	if (context->dispatchParallel)
+	if (context->dispatchParallel || (cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE))
 		plan->dispatch = DISPATCH_PARALLEL;
 
 	if (context->anyInitPlanParallel)

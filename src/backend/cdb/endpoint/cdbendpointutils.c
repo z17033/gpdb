@@ -576,6 +576,6 @@ status_string_to_enum(const char *status)
 	}
 	else
 	{
-		elog(ERROR, "unknown endpoint status %d", status);
+		elog(ERROR, "unknown endpoint status %s", status);
 	}
 }
