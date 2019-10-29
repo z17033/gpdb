@@ -25,6 +25,9 @@ extended_protocol_test: extended_protocol_test.c
 test_parallel_retrieve_cursor_extended_query: test_parallel_retrieve_cursor_extended_query.c
 	$(CC) $(CPPFLAGS) -I$(top_builddir)/src/interfaces/libpq -L$(GPHOME)/lib -L$(top_builddir)/src/interfaces/libpq  -o $@ $< -lpq
 
+test_parallel_retrieve_cursor_extended_query_error: test_parallel_retrieve_cursor_extended_query_error.c
+	$(CC) $(CPPFLAGS) -I$(top_builddir)/src/interfaces/libpq -L$(GPHOME)/lib -L$(top_builddir)/src/interfaces/libpq  -o $@ $< -lpq
+
 test_python:
 	python helpers_test.py
 
@@ -84,7 +87,7 @@ installcheck-parallel-retrieve-cursor-check-segments:
 		exit -1 ; \
 	fi
 
-installcheck-parallel-retrieve-cursor: install installcheck-parallel-retrieve-cursor-check-segments test_parallel_retrieve_cursor_extended_query
+installcheck-parallel-retrieve-cursor: install installcheck-parallel-retrieve-cursor-check-segments test_parallel_retrieve_cursor_extended_query test_parallel_retrieve_cursor_extended_query_error
 	# Before running test, set statement_timeout to 1 minute so that even if some
 	# error make 'gp_wait_parallel_retrieve_cursor()' hang, it will be canceled when timeout.
 	#
@@ -115,7 +118,15 @@ installcheck-parallel-retrieve-cursor: install installcheck-parallel-retrieve-cu
 		echo "[ERROR]: test_parallel_retrieve_cursor_extended_query test failed." ; \
 		cat test_parallel_retrieve_cursor_extended_query.log ; echo "" ; \
 	fi; \
+	./test_parallel_retrieve_cursor_extended_query_error "gpadmin" "postgres" > test_parallel_retrieve_cursor_extended_query_error.log 2>&1 ; \
+	ret3=$$? ; \
+	if [ "$${ret3}" == 0 ]; then \
+		echo "[PASS]: test_parallel_retrieve_cursor_extended_query_error test pass. See test_parallel_retrieve_cursor_extended_query_error.log." ; echo "" ; \
+	else \
+		echo "[ERROR]: test_parallel_retrieve_cursor_extended_query_error test failed." ; \
+		cat test_parallel_retrieve_cursor_extended_query_error.log ; echo "" ; \
+	fi; \
 	gpconfig -c statement_timeout -v $${default_segment_timeout} -m $${default_master_timeout} && \
 	gpstop -u && \
 	gpconfig -s statement_timeout && \
-	exit "$$(( $${ret1} || $${ret2} ))"
+	exit "$$(( $${ret1} || $${ret2} || $${ret3} ))"

@@ -1,10 +1,10 @@
 /*
- * src/test/examples/test_parallel_cursor_extended_query.c
+ * src/test/examples/test_parallel_cursor_extended_query_error.c
  *
  *
- * test_parallel_cursor_extended_query.c
+ * test_parallel_cursor_extended_query_error.c
  *
- * this program is to show extended query with the PARALLEL RETRIEVE CURSOR.
+ * this program is to test: RETRIEVE statement not allowed in the non-retrieve mode for extended query protocol.
  */
 #include <stdio.h>
 #include <string.h>
@@ -263,7 +263,7 @@ main(int argc, char **argv)
 	char	   *pghost,
 			   *pgport,
 			   *pgoptions,
-			   *pgoptions_retrieve_mode,
+			   *pgoptions_utility_mode,
 			   *pgtty;
 	char	   *dbName, *dbUser;
 	int			i;
@@ -300,7 +300,7 @@ main(int argc, char **argv)
 	pgport = NULL;				/* port of the backend */
 	pgoptions = NULL;			/* special options to start up the backend
 								 * server */
-	pgoptions_retrieve_mode = "-c gp_session_role=retrieve";	/* specify this
+	pgoptions_utility_mode = "-c gp_session_role=utility";	/* specify this
 																 * connection is in the
 																 * retrieve mode */
 	pgtty = NULL;				/* debugging tty for the backend */
@@ -354,8 +354,8 @@ main(int argc, char **argv)
 	endpoint_conns_num = ntup;
 
 	/*
-	 * create retrieve mode connection to endpoints according to the endpoints
-	 * info fetched
+	 * create utility mode connection to endpoints according to the endpoints
+	 * info fetched, so that the RETRIEVE statement should failed.
 	 */
 	for (i = 0; i < ntup; i++)
 	{
@@ -365,7 +365,7 @@ main(int argc, char **argv)
 		tokens[i] = strdup(PQgetvalue(res1, i, 2));
 		endpoint_names[i] = strdup(PQgetvalue(res1, i, 3));
 
-		endpoint_conns[i] = PQsetdbLogin(host, port, pgoptions_retrieve_mode,
+		endpoint_conns[i] = PQsetdbLogin(host, port, pgoptions_utility_mode,
 										 pgtty, dbName,
 										 dbUser, tokens[i]);
 		check_prepare_conn(endpoint_conns[i], dbName, i);
@@ -398,15 +398,17 @@ main(int argc, char **argv)
 		snprintf(sql, sizeof(sql), "RETRIEVE ALL FROM ENDPOINT %s;", endpoint_names[i]);
 		if(exec_sql_with_resultset_in_extended_query_protocol(endpoint_conns[i], sql, i))
 		{
-			fprintf(stderr, "Error during retrieving result on endpoint.\n");
-			goto LABEL_ERR;
+			/* This test is to confirmed that all endpoints should be failed when execute RETRIEVE in UTITILY mode */
+			fprintf(stderr, "Error as expected during retrieving result on endpoint.\n");
+			printf("\n------ Skip End retrieving data from Endpoint %d# ------.\n", i);
+			continue;
 		}
 
 		printf("\n------ End retrieving data from Endpoint %d# ------.\n", i);
 	}
 
-	/* Check the status returns finished */
-	if (exec_check_parallel_cursor(master_conn, 1))
+	/* Check the status returns not finished */
+	if (!exec_check_parallel_cursor(master_conn, 1))
 	{
 		fprintf(stderr, "Error during check the PARALLEL RETRIEVE CURSOR\n");
 		goto LABEL_ERR;
