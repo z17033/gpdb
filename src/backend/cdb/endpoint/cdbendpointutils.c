@@ -32,7 +32,7 @@
  */
 typedef struct
 {
-	char		name[ENDPOINT_NAME_LEN];
+	char		name[NAMEDATALEN];
 	char		cursorName[NAMEDATALEN];
 	int8		token[ENDPOINT_TOKEN_LEN];
 	int			dbid;
@@ -188,7 +188,7 @@ token_equals(const int8 *token1, const int8 *token2)
 bool
 endpoint_name_equals(const char *name1, const char *name2)
 {
-	return strncmp(name1, name2, ENDPOINT_NAME_LEN) == 0;
+	return strncmp(name1, name2, NAMEDATALEN) == 0;
 }
 
 /*
@@ -293,7 +293,7 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 				for (int j = 0; j < PQntuples(result); j++)
 				{
 					StrNCpy(mystatus->status[idx].name, PQgetvalue(result, j, 0),
-							ENDPOINT_NAME_LEN);
+							NAMEDATALEN);
 					StrNCpy(mystatus->status[idx].cursorName,
 							PQgetvalue(result, j, 1), NAMEDATALEN);
 					parse_token(mystatus->status[idx].token,
@@ -349,7 +349,7 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 				{
 					EndpointStatus *status = &mystatus->status[idx];
 
-					StrNCpy(status->name, entry->name, ENDPOINT_NAME_LEN);
+					StrNCpy(status->name, entry->name, NAMEDATALEN);
 					StrNCpy(status->cursorName, entry->cursorName, NAMEDATALEN);
 					get_token_by_session_id(entry->sessionID, entry->userID,
 											status->token);

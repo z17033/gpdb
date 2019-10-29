@@ -177,7 +177,7 @@ static void sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid
 
 /* utility */
 static void generate_endpoint_name(char *name, const char *cursorName,
-					   int32 sessionID, int32 segindex);
+					   int32 sessionID);
 static void check_dispatch_connection(void);
 
 /* Endpoints internal operation UDF's helper function */
@@ -517,7 +517,7 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 			if (sharedEndpoints[i].empty)
 			{
 				/* pretend to set a valid endpoint */
-				snprintf(sharedEndpoints[i].name, ENDPOINT_NAME_LEN, "%s",
+				snprintf(sharedEndpoints[i].name, NAMEDATALEN, "%s",
 						 DUMMY_ENDPOINT_NAME);
 				snprintf(sharedEndpoints[i].cursorName, NAMEDATALEN, "%s",
 						 DUMMY_CURSOR_NAME);
@@ -561,8 +561,7 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 						errmsg("failed to allocate endpoint")));
 	}
 
-	generate_endpoint_name(sharedEndpoints[i].name, cursorName, gp_session_id,
-						   GpIdentity.segindex);
+	generate_endpoint_name(sharedEndpoints[i].name, cursorName, gp_session_id);
 	StrNCpy(sharedEndpoints[i].cursorName, cursorName, NAMEDATALEN);
 	sharedEndpoints[i].databaseID = MyDatabaseId;
 	sharedEndpoints[i].sessionID = gp_session_id;
@@ -940,7 +939,7 @@ free_endpoint(volatile EndpointDesc * endpoint)
 	endpoint->databaseID = InvalidOid;
 	endpoint->mqDsmHandle = DSM_HANDLE_INVALID;
 	endpoint->empty = true;
-	memset((char *) endpoint->name, '\0', ENDPOINT_NAME_LEN);
+	memset((char *) endpoint->name, '\0', NAMEDATALEN);
 	ResetLatch(&endpoint->ackDone);
 	DisownLatch(&endpoint->ackDone);
 
@@ -1107,12 +1106,11 @@ get_session_id_for_auth(Oid userID, const int8 *token)
  * generate_endpoint_name
  *
  * Generate the endpoint name based on the PARALLEL RETRIEVE CURSOR name,
- * session ID and the segment index.lwlock.hlwlock.h
+ * the sessionID and 5 random bytes.
  * The endpoint name should be unique across sessions.
  */
 void
-generate_endpoint_name(char *name, const char *cursorName, int32 sessionID,
-					   int32 segindex)
+generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 {
 	/*
 	 * Use counter to avoid duplicated endpoint names when error happens.
@@ -1120,10 +1118,26 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID,
 	 * reuse the previous endpoint name may cause unexpected behavior for the
 	 * retrieving session.
 	 */
-	static uint8 counter = 0;
-
-	snprintf(name, ENDPOINT_NAME_LEN, "%s%08x%08x%02x", cursorName, sessionID,
-			 segindex, counter++);
+	//part1:cursor name
+	int cursorLen = strlen(cursorName);
+	if (cursorLen > ENDPOINT_NAME_CURSOR_LEN)
+	{
+		cursorLen = ENDPOINT_NAME_CURSOR_LEN;
+	}
+	memcpy(name, cursorName, cursorLen);
+	//part2:sessionID
+	snprintf(name + cursorLen, ENDPOINT_NAME_SESSIONID_LEN + 1,
+			"%08x", sessionID);
+	//part3:random
+	char	*random = palloc(ENDPOINT_NAME_RANDOM_LEN);
+	if (!pg_strong_random(random, ENDPOINT_NAME_RANDOM_LEN))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("failed to generate a new random.")));
+	}
+	hex_encode((const char*)random, ENDPOINT_NAME_RANDOM_LEN,
+			name + cursorLen + ENDPOINT_NAME_SESSIONID_LEN);
+	pfree(random);
 }
 
 /*

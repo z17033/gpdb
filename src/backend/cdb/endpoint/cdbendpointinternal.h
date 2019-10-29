@@ -34,12 +34,13 @@
  * Naming rules for endpoint:
  * cursorname_sessionIdHex_segIndexHex
  */
-#define ENDPOINT_NAME_LEN (NAMEDATALEN + 1 + 8 + 1 + 8)
-
 
 /* ACK NOTICE MESSAGE FROM ENDPOINT QE/Entry DB to QD */
 #define ENDPOINT_READY_ACK "ENDPOINT_READY"
 #define ENDPOINT_FINISHED_ACK "ENDPOINT_FINISHED"
+#define ENDPOINT_NAME_CURSOR_LEN 45
+#define ENDPOINT_NAME_SESSIONID_LEN 8
+#define ENDPOINT_NAME_RANDOM_LEN 5
 
 
 /*
@@ -71,7 +72,7 @@ enum RetrieveStatus
  */
 typedef struct EndpointDesc
 {
-	char		name[ENDPOINT_NAME_LEN];		/* Endpoint name */
+	char		name[NAMEDATALEN];		/* Endpoint name */
 	char		cursorName[NAMEDATALEN];		/* Parallel cursor name */
 	Oid			databaseID;		/* Database OID */
 	pid_t		senderPid;		/* The PID of EPR_SENDER(endpoint), set before

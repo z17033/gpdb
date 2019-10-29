@@ -1968,3 +1968,116 @@ DECLARE
 --------
  FINISH 
 (1 row)
+-1Rq: ... <quitting>
+
+-- Test24: endpoint name is too long to be truncated.
+1: BEGIN;
+BEGIN
+1: DECLARE "x12345678901234567890123456789012345678901234567890123456789x" PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t5;
+DECLARE
+1: DECLARE "x123456789012345678901234567890123456789012345678901234567890123456789x" PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t5;
+DECLARE
+1: DECLARE "x1234567890123456789012345678901234567890123456789012345678901x" PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t5;
+DECLARE
+1: @out_sh 'parse_endpoint 24 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='x12345678901234567890123456789012345678901234567890123456789x';
+ endpoint_id24_1 | token_id | host_id | port_id | READY
+ endpoint_id24_2 | token_id | host_id | port_id | READY
+ endpoint_id24_3 | token_id | host_id | port_id | READY
+(3 rows)
+1: @out_sh 'parse_endpoint 24_1 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='x12345678901234567890123456789012345678901234567890123456789012';
+ endpoint_id24_1_1 | token_id | host_id | port_id | READY
+ endpoint_id24_1_2 | token_id | host_id | port_id | READY
+ endpoint_id24_1_3 | token_id | host_id | port_id | READY
+(3 rows)
+1: @out_sh 'parse_endpoint 24_2 1 2 3 4': SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='x1234567890123456789012345678901234567890123456789012345678901x';
+ endpoint_id24_2_1 | token_id | host_id | port_id | READY
+ endpoint_id24_2_2 | token_id | host_id | port_id | READY
+ endpoint_id24_2_3 | token_id | host_id | port_id | READY
+(3 rows)
+*R: @in_sh 'sub_endpoint_name @ENDPOINT24': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT24";
+#-1retrieve> FATAL:  Retrieve auth token is invalid
+
+
+ b 
+---
+ 2 
+ 3 
+ 4 
+ 7 
+ 8 
+(5 rows)
+
+ b 
+---
+ 1 
+(1 row)
+
+ b  
+----
+ 5  
+ 6  
+ 9  
+ 10 
+(4 rows)
+*R: @in_sh 'sub_endpoint_name @ENDPOINT24_1': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT24_1";
+#-1retrieve> FATAL:  Retrieve auth token is invalid
+
+
+ b 
+---
+ 2 
+ 3 
+ 4 
+ 7 
+ 8 
+(5 rows)
+
+ b 
+---
+ 1 
+(1 row)
+
+ b  
+----
+ 5  
+ 6  
+ 9  
+ 10 
+(4 rows)
+*R: @in_sh 'sub_endpoint_name @ENDPOINT24_2': RETRIEVE ALL FROM ENDPOINT "@ENDPOINT24_2";
+#-1retrieve> FATAL:  Retrieve auth token is invalid
+
+
+ b 
+---
+ 2 
+ 3 
+ 4 
+ 7 
+ 8 
+(5 rows)
+
+ b 
+---
+ 1 
+(1 row)
+
+ b  
+----
+ 5  
+ 6  
+ 9  
+ 10 
+(4 rows)
+1: ROLLBACK;
+ROLLBACK
+
+-- Test25: cursor name is too long to be truncated.
+1: BEGIN;
+BEGIN
+1: DECLARE "x123456789012345678901234567890123456789012345678901234567890123456789x" PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t1;
+DECLARE
+1: DECLARE "x123456789012345678901234567890123456789012345678901234567890123456789y" PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t1;
+ERROR:  cursor "x12345678901234567890123456789012345678901234567890123456789012" already exists
+1: ROLLBACK;
+ROLLBACK

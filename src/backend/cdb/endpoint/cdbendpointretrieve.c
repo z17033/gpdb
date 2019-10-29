@@ -62,7 +62,7 @@
 typedef struct MsgQueueStatusEntry
 {
 	/* The name of endpoint to be retrieved, also behave as hash key */
-	char		endpointName[ENDPOINT_NAME_LEN];
+	char		endpointName[NAMEDATALEN];
 	/* The dsm handle which contains shared memory message queue */
 	dsm_segment *mqSeg;
 	/* Shared memory message queue */
@@ -148,7 +148,7 @@ GetRetrieveStmtTupleDesc(const RetrieveStmt * stmt)
 		HASHCTL		ctl;
 
 		MemSet(&ctl, 0, sizeof(ctl));
-		ctl.keysize = ENDPOINT_NAME_LEN;
+		ctl.keysize = NAMEDATALEN;
 		ctl.entrysize = sizeof(MsgQueueStatusEntry);
 		ctl.hash = string_hash;
 		msgQueueHTB = hash_create("endpoint hash", MAX_ENDPOINT_SIZE, &ctl,
