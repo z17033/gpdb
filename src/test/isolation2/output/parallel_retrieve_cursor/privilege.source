@@ -428,5 +428,5 @@ DECLARE
  3     
 (1 row)
 1: SELECT * FROM GP_ENDPOINTS_INFO(TRUE);
-ERROR:  must be superuser to call 'GP_ENDPOINTS_INFO(TRUE)'
+ERROR:  must be superuser to call 'gp_endpoints_info(true)'
 1q: ... <quitting>
