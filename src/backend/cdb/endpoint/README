@@ -170,54 +170,6 @@ postgres=# RETRIEVE ALL FROM ENDPOINT c1_00001507_00000000;
 (2 rows)
 
 
-List Endpoints In Retrieve Session
-==================================
-
-It is possible to list all endpoints status in current retrieve session
-by using UDF "gp_endpoints_status_info()".
-
-Syntax:
-gp_endpoints_status_info()
-
-gp_endpoints_status_info Columns:
-|--------------+-----------+------------------------------------------|
-| Column Name  | Data Type | Description                              |
-|--------------+-----------+------------------------------------------|
-| token        | text      | Retrieve session authentication token    |
-|--------------+-----------+------------------------------------------|
-| databaseid   | integer   | The database where the cursor is created |
-|--------------+-----------+------------------------------------------|
-|              |           | on                                       |
-|--------------+-----------+------------------------------------------|
-| senderpid    | integer   | The process where the query results are  |
-|              |           | sent from                                |
-|--------------+-----------+------------------------------------------|
-| receiverpid  | integer   | The process where the results are being  |
-|              |           | received on                              |
-|--------------+-----------+------------------------------------------|
-| status       | text      | The status for the endpoint              |
-|              |           | See gp_endpoints_info for more details   |
-|--------------+-----------+------------------------------------------|
-| dbid         | integer   | The QE's segment id                      |
-|--------------+-----------+------------------------------------------|
-| sessionid    | integer   | The session where the cursor created in  |
-|--------------+-----------+------------------------------------------|
-| userid       | oid       | The user who created this endpoint       |
-|--------------+-----------+------------------------------------------|
-| endpointname | text      | The identification of this endpoint      |
-|--------------+-----------+------------------------------------------|
-| cursorname   | text      | Parallel retrieve cursor name            |
-|--------------+-----------+------------------------------------------|
-
-Examples:
-
-postgres=# select * from gp_endpoints_status_info();
-               token                | databaseid | senderpid | receiverpid | status | dbid | sessionid | userid |     endpointname     | cursorname
-------------------------------------+------------+-----------+-------------+--------+------+-----------+--------+----------------------+------------
- tk071500004015dc6da471b20417afed65 |      16532 |    736783 |          -1 | READY  |    2 |      5383 |     10 | c2_00001507_00000000 | c2
-(1 row)
-
-
 Check Parallel Retrieve Cursor Retrieving Status
 ================================================
 
@@ -270,6 +222,24 @@ postgres=# SELECT gp_wait_parallel_retrieve_cursor('c2'); <waiting...>
 -----------------------------------
  t
 (1 row)
+
+
+Error Handling In Retrieve Session
+==================================
+
+When error happens in a retrieve session, the endpoint will be removed
+from QE. By checking GP_ENDPOINTS on QD, the endpoint won't be shown in
+the list anymore. The other retrieve sessions can still retrieve from
+other endpoints which belong to this session at this time. But if
+gp_check_parallel_retrieve_cursor or gp_wait_parallel_retrieve_cursor
+are executed on QD, the other retrieve sessions will be canceled since
+the error is delivered to QD and treated as an error happens in the
+transaction.
+
+When the endpoint is partially retrieved and then the corresponding
+retrieve session quits, the case will be treated as a retrieve session
+error as well. The endpoint will be removed and an error will be
+reported on QD when checking or waiting on the retrieve status.
 
 
 Close Parallel Retrieve Cursor
