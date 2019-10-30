@@ -192,7 +192,15 @@ endpoint_name_equals(const char *name1, const char *name2)
 }
 
 /*
- * On QD, display all the endpoints information in shared memory
+ * On QD, display all the endpoints information in shared memory.
+ * When allSessions is false, only parallel retrieve cursors created
+ * in current session will be listed. Otherwise, all parallel retrieve
+ * cursors will be listed.
+ *
+ * Note:
+ * As a superuser, it can list all endpoints info of all users', but for
+ * non-superuser, it can only list the current user's endpoints info for
+ * security reason.
  */
 Datum
 gp_endpoints_info(PG_FUNCTION_ARGS)
@@ -311,7 +319,7 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 		{
 			const EndpointDesc *entry = get_endpointdesc_by_index(i);
 
-			if (!entry->empty)
+			if (!entry->empty && (superuser() || entry->userID == GetUserId()))
 				cnt++;
 		}
 		if (cnt != 0)
@@ -333,8 +341,11 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 			for (int i = 0; i < MAX_ENDPOINT_SIZE; i++)
 			{
 				const EndpointDesc *entry = get_endpointdesc_by_index(i);
-
-				if (!entry->empty)
+				/*
+				 * Only allow current user to get his own endpoints.
+				 * Or let superuser get all endpoints.
+				 */
+				if (!entry->empty && (superuser() || entry->userID == GetUserId()))
 				{
 					EndpointStatus *status = &mystatus->status[idx];
 
@@ -369,6 +380,11 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 
 		Assert(qe_status);
 
+		/*
+		 * If allSessions is true, show all endpoints in mystatus->status.
+		 * Otherwise, only show endpoints in mystatus->status that sessionId
+		 * equals to current session.
+		 */
 		if (!allSessions && qe_status->sessionId != gp_session_id)
 		{
 			continue;
@@ -424,7 +440,9 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 
 /*
  * Display the status of all valid EndpointDesc of current
- * backend in shared memory
+ * backend in shared memory.
+ * If current user is superuser, list all endpoints on this segment.
+ * Or only show current user's endpoints on this segment.
  */
 Datum
 gp_endpoints_status_info(PG_FUNCTION_ARGS)
@@ -486,6 +504,10 @@ gp_endpoints_status_info(PG_FUNCTION_ARGS)
 		const EndpointDesc *entry =
 		get_endpointdesc_by_index(mystatus->currentIdx);
 
+		/*
+		 * Only allow current user to list his own endpoints.
+		 * Or let superuser list all endpoints.
+		 */
 		if (!entry->empty && (superuser() || entry->userID == GetUserId()))
 		{
 			char	   *status = NULL;

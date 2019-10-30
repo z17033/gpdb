@@ -22,6 +22,7 @@ RESET SESSION AUTHORIZATION;
 --------- Test1: Admin should be able to see other user's endpoint, retrieve role auth should check token and user
 2: @out_sh 'get_cell ADMIN_ID 3 1 && match_sub_tt admin_id $ADMIN_ID': SELECT usesysid FROM pg_user WHERE usename = 'adminuser';
 2: @out_sh 'get_cell U1_ID 3 1 && match_sub_tt u1_id $U1_ID': SELECT usesysid FROM pg_user WHERE usename = 'u1';
+2: @out_sh 'get_cell UU1_ID 3 1 && match_sub_tt uu1_id $UU1_ID': SELECT usesysid FROM pg_user WHERE usename = 'uu1';
 --- c1 is declared by superuser
 1: SET SESSION AUTHORIZATION adminuser;
 1: SELECT SESSION_USER, CURRENT_USER;
@@ -32,16 +33,22 @@ RESET SESSION AUTHORIZATION;
 1: SELECT SESSION_USER, CURRENT_USER;
 --- c2 is declared by u1
 1: DECLARE c2 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
+--- c12 is declared by u1 on entry db
+1: DECLARE c12 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM generate_series(1,10);
+--- u1 is able to see all endoints created by himself.
+1: SELECT DISTINCT(cursorname), userid FROM gp_endpoints_info(true);
 
 --- adminuser should be able to see all the endpoints declared by u1 with status READY
 2: SET SESSION AUTHORIZATION adminuser;
 2: SELECT SESSION_USER, CURRENT_USER;
 2: @out_sh 'parse_endpoint 2 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c2';
+2: @out_sh 'parse_endpoint 12 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c12';
+2: SELECT DISTINCT(cursorname), userid FROM gp_endpoints_info(true);
 
 --- adminuser should be able to see the cursor status change to READY
 2: SELECT token, usename, status FROM gp_endpoints_info(true) endpoints, pg_user WHERE endpoints.userid = pg_user.usesysid order by usename;
 
---- adminuser should be able to see all endpoints declared by u1 in retrieved mode
+--- adminuser should be able to see all endpoints declared by u1 in utility mode
 3: @in_sh 'export CURRENT_ENDPOINT_POSTFIX=1 ; export RETRIEVE_USER="adminuser"; echo $RAW_STR ' : SELECT 1;
 0R: SELECT SESSION_USER, CURRENT_USER;
 0U: SELECT token, userid FROM gp_endpoints_status_info();
@@ -56,6 +63,9 @@ RESET SESSION AUTHORIZATION;
 1: SELECT SESSION_USER, CURRENT_USER;
 1: DECLARE c3 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM t1;
 2: @out_sh 'parse_endpoint 3 1 2 3 4' : SELECT endpointname,token,hostname,port,status FROM gp_endpoints_info(true) WHERE cursorname='c3';
+--- uu1 can not see u1's endpoints.
+1: SELECT DISTINCT(cursorname), userid FROM gp_endpoints_info(true);
+2: SELECT DISTINCT(cursorname), userid FROM gp_endpoints_info(true);
 
 3: @in_sh 'export RETRIEVE_USER="uu1"; echo $RAW_STR ' : SELECT 1;
 --- Login as uu1 and retrieve all to finish the test
