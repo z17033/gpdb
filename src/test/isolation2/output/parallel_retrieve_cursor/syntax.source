@@ -66,3 +66,23 @@ SELECT * FROM gp_wait_parallel_retrieve_cursor('c1');
 ERROR:  this UDF only works for PARALLEL RETRIEVE CURSOR.
 ROLLBACK;
 ROLLBACK
+
+-- Test: PARALLEL RETRIEVE CURSOR can not support in SPI
+BEGIN;
+BEGIN
+DECLARE c1 CURSOR WITHOUT HOLD FOR SELECT * FROM t1;
+DECLARE
+DO $$ DECLARE i int4; c2 refcursor = 'c1'; BEGIN FETCH FROM c2 INTO i; RAISE NOTICE '%', i; END; $$;
+DO
+ROLLBACK;
+ROLLBACK
+BEGIN;
+BEGIN
+DECLARE c3 PARALLEL RETRIEVE CURSOR WITHOUT HOLD FOR SELECT * FROM t1;
+DECLARE
+DO $$ DECLARE i int4; c4 refcursor = 'c3'; BEGIN FETCH FROM c4 INTO i; RAISE NOTICE '%', i; END; $$;
+ERROR:  The PARALLEL RETRIEVE CURSOR is not supported in SPI.
+HINT:  Using normal cursor statement instead.
+CONTEXT:  PL/pgSQL function inline_code_block line 1 at FETCH
+ROLLBACK;
+ROLLBACK

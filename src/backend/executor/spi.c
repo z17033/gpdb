@@ -24,6 +24,7 @@
 #include "executor/executor.h"
 #include "executor/spi_priv.h"
 #include "miscadmin.h"
+#include "nodes/parsenodes.h"  /* For CURSOR_OPT_PARALLEL_RETRIEVE */
 #include "tcop/pquery.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
@@ -1499,7 +1500,15 @@ SPI_cursor_open_internal(const char *name, SPIPlanPtr plan,
 Portal
 SPI_cursor_find(const char *name)
 {
-	return GetPortalByName(name);
+	Portal portal = GetPortalByName(name);
+	if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+	{
+		ereport(ERROR,
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("The PARALLEL RETRIEVE CURSOR is not supported in SPI."),
+				errhint("Using normal cursor statement instead.")));
+	}
+	return portal;
 }
 
 
