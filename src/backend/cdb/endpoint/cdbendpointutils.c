@@ -210,11 +210,11 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 		ereport(
 			ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
 			errmsg(
-				 "gp_endpoints_info() only can be called on query dispatcher")));
+				 "GP_ENDPOINTS_INFO() only can be called on query dispatcher")));
 
 	if (allSessions && !superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			errmsg("must be superuser to call 'gp_endpoints_info(true)'")));
+			errmsg("must be superuser to call 'GP_ENDPOINTS_INFO(TRUE)'")));
 
 	if (SRF_IS_FIRSTCALL())
 	{
