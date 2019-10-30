@@ -1129,13 +1129,13 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 	snprintf(name + cursorLen, ENDPOINT_NAME_SESSIONID_LEN + 1,
 			"%08x", sessionID);
 	//part3:random
-	char	*random = palloc(ENDPOINT_NAME_RANDOM_LEN);
-	if (!pg_strong_random(random, ENDPOINT_NAME_RANDOM_LEN))
+	char	*random = palloc(ENDPOINT_NAME_RANDOM_LEN / 2);
+	if (!pg_strong_random(random, ENDPOINT_NAME_RANDOM_LEN / 2))
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 					errmsg("failed to generate a new random.")));
 	}
-	hex_encode((const char*)random, ENDPOINT_NAME_RANDOM_LEN,
+	hex_encode((const char*)random, ENDPOINT_NAME_RANDOM_LEN / 2,
 			name + cursorLen + ENDPOINT_NAME_SESSIONID_LEN);
 	pfree(random);
 }
