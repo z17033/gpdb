@@ -286,7 +286,7 @@ attach_endpoint(MsgQueueStatusEntry *entry)
 								"RETRIEVE CURSOR creator to retrieve.")));
 	}
 
-	if (endpointDesc->attachStatus == Status_Attached &&
+	if (endpointDesc->attachStatus == Status_Retrieving &&
 		endpointDesc->receiverPid != MyProcPid)
 	{
 		attachedPid = endpointDesc->receiverPid;
@@ -320,12 +320,13 @@ attach_endpoint(MsgQueueStatusEntry *entry)
 	{
 		endpointDesc->receiverPid = MyProcPid;
 		entry->retrieveStatus = RETRIEVE_STATUS_INIT;
+		endpointDesc->attachStatus = Status_Retrieving;
 	}
-	endpointDesc->attachStatus = Status_Attached;
+
 	/* Not set if Status_Finished */
-	if (endpointDesc->attachStatus == Status_Prepared)
+	if (endpointDesc->attachStatus == Status_Ready)
 	{
-		endpointDesc->attachStatus = Status_Attached;
+		endpointDesc->attachStatus = Status_Retrieving;
 	}
 	handle = endpointDesc->mqDsmHandle;
 
@@ -585,15 +586,19 @@ detach_endpoint(MsgQueueStatusEntry * entry, bool resetPID)
 	}
 
 	/* Don't set if Status_Finished */
-	if (endpoint->attachStatus == Status_Attached)
+	if (endpoint->attachStatus == Status_Retrieving)
 	{
+		/*
+		 * If finish retrieving, set the endpoint to FINISHED,
+		 * otherwise set the endpoint to ATTACHED.
+		 */
 		if (entry->retrieveStatus == RETRIEVE_STATUS_FINISH)
 		{
 			endpoint->attachStatus = Status_Finished;
 		}
 		else
 		{
-			endpoint->attachStatus = Status_Prepared;
+			endpoint->attachStatus = Status_Attached;
 		}
 	}
 

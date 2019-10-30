@@ -166,6 +166,7 @@ endpoint_role_to_string(enum ParallelRtrvCursorExecRole role)
 
 		default:
 			Assert(false);
+			return "";
 	}
 }
 
@@ -557,14 +558,17 @@ status_enum_to_string(enum AttachStatus status)
 
 	switch (status)
 	{
-		case Status_Prepared:
+		case Status_Ready:
 			result = GP_ENDPOINT_STATUS_READY;
 			break;
-		case Status_Attached:
+		case Status_Retrieving:
 			result = GP_ENDPOINT_STATUS_RETRIEVING;
 			break;
+		case Status_Attached:
+			result = GP_ENDPOINT_STATUS_ATTACHED;
+			break;
 		case Status_Finished:
-			result = GP_ENDPOINT_STATUS_FINISH;
+			result = GP_ENDPOINT_STATUS_FINISHED;
 			break;
 		case Status_Released:
 			result = GP_ENDPOINT_STATUS_RELEASED;
@@ -582,13 +586,17 @@ status_string_to_enum(const char *status)
 	Assert(status);
 	if (strcmp(status, GP_ENDPOINT_STATUS_READY) == 0)
 	{
-		return Status_Prepared;
+		return Status_Ready;
 	}
 	else if (strcmp(status, GP_ENDPOINT_STATUS_RETRIEVING) == 0)
 	{
+		return Status_Retrieving;
+	}
+	else if (strcmp(status, GP_ENDPOINT_STATUS_ATTACHED) == 0)
+	{
 		return Status_Attached;
 	}
-	else if (strcmp(status, GP_ENDPOINT_STATUS_FINISH) == 0)
+	else if (strcmp(status, GP_ENDPOINT_STATUS_FINISHED) == 0)
 	{
 		return Status_Finished;
 	}

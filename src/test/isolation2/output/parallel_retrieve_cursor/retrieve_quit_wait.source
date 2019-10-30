@@ -221,11 +221,11 @@ DECLARE
 (1 row)
 
 0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
- cursorname | ?column? | ?column? | status 
-------------+----------+----------+--------
- c1         | t        | t        | READY  
- c2         | f        | t        | FINISH 
- c3         | t        | f        | READY  
+ cursorname | ?column? | ?column? | status   
+------------+----------+----------+----------
+ c1         | t        | t        | ATTACHED 
+ c2         | f        | t        | FINISHED 
+ c3         | t        | f        | READY    
 (3 rows)
 -- quit the retrieve session
 0Rq: ... <quitting>
@@ -242,16 +242,16 @@ DECLARE
 -- The endpoint on seg0 for c1 should firstly become to RELEASED (the retrieve process set it),
 -- and then was removed (during the endpoint QE cancelled)
 2: SELECT cursorname, status FROM gp_endpoints_info(true);
- cursorname | status 
-------------+--------
- c2         | FINISH 
- c3         | READY  
- c1         | READY  
- c2         | FINISH 
- c3         | READY  
- c1         | READY  
- c2         | FINISH 
- c3         | READY  
+ cursorname | status   
+------------+----------
+ c1         | ATTACHED 
+ c1         | ATTACHED 
+ c2         | FINISHED 
+ c2         | FINISHED 
+ c2         | FINISHED 
+ c3         | READY    
+ c3         | READY    
+ c3         | READY    
 (8 rows)
 
 -- Since c1 has been only partially retrieved, an error will be raised when transaction ends.
@@ -456,11 +456,11 @@ DECLARE
 -- skip TOKEN3 in this session
 
 0U: SELECT cursorname,senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
- cursorname | ?column? | ?column? | status 
-------------+----------+----------+--------
- c4         | t        | t        | READY  
- c5         | f        | t        | FINISH 
- c6         | t        | f        | READY  
+ cursorname | ?column? | ?column? | status   
+------------+----------+----------+----------
+ c4         | t        | t        | ATTACHED 
+ c5         | f        | t        | FINISHED 
+ c6         | t        | f        | READY    
 (3 rows)
 0Rq: ... <quitting>
 

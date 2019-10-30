@@ -388,16 +388,14 @@ seg1=# RETRIEVE 1 FROM ENDPOINT c1_00001507_00000001;
  4
 (1 row)
 
-Now the status of endpoint "c1_00001507_00000001" becomes "RETRIEVING"
-since there is a retrieve session retrieved once from the endpoint but
-hasn't finished retrieving.
+The status of endpoint "c1_00001507_00000001" will firstly becomes "RETRIEVING", then becomes "ATTACHED".
 
 -- List endpoints on master to check
 master=# SELECT * FROM GP_ENDPOINTS;
-               token                | cursorname | sessionid | hostname | port  | dbid | userid | status     |     endpointname
-------------------------------------+------------+-----------+----------+-------+------+--------+------------+----------------------
- tk071500004015dc6da471b20417afed65 | c1         |      5383 | mdw      | 25432 |    2 |     10 | FINISHED   | c1_00001507_00000000
- tk071500004015dc6da471b20417afed65 | c1         |      5383 | mdw      | 25433 |    3 |     10 | RETRIEVING | c1_00001507_00000001
+               token                | cursorname | sessionid | hostname | port  | dbid | userid | status    |     endpointname
+------------------------------------+------------+-----------+----------+-------+------+--------+-----------+----------------------
+ tk071500004015dc6da471b20417afed65 | c1         |      5383 | mdw      | 25432 |    2 |     10 | FINISHED  | c1_00001507_00000000
+ tk071500004015dc6da471b20417afed65 | c1         |      5383 | mdw      | 25433 |    3 |     10 | ATTACHED  | c1_00001507_00000001
 (2 rows)
 -- To check if the retrieving finished
 master=# select gp_check_parallel_retrieve_cursor('c2');

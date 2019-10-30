@@ -567,7 +567,7 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 	sharedEndpoints[i].userID = GetUserId();
 	sharedEndpoints[i].senderPid = MyProcPid;
 	sharedEndpoints[i].receiverPid = InvalidPid;
-	sharedEndpoints[i].attachStatus = Status_Prepared;
+	sharedEndpoints[i].attachStatus = Status_Ready;
 	sharedEndpoints[i].empty = false;
 	sharedEndpoints[i].mqDsmHandle = dsmHandle;
 	OwnLatch(&sharedEndpoints[i].ackDone);
@@ -830,7 +830,7 @@ signal_receiver_abort(pid_t receiverPid, enum AttachStatus attachStatus)
 
 	elog(DEBUG3, "CDB_ENDPOINT: signal the receiver to abort.");
 
-	isAttached = (attachStatus == Status_Attached);
+	isAttached = (attachStatus == Status_Retrieving);
 	if (receiverPid != InvalidPid && isAttached && receiverPid != MyProcPid)
 	{
 		SetBackendCancelMessage(receiverPid, "Signal the receiver to abort.");

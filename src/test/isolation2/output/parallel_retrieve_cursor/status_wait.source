@@ -219,20 +219,20 @@ DECLARE
 
 -- check initial status after "CHECK PARALLEL RETRIEVE CURSOR"
 2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- READY  
- READY  
- READY  
+ status   
+----------
+ ATTACHED 
+ READY    
+ READY    
 (3 rows)
 *U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
  ?column? | ?column? | status 
 ----------+----------+--------
 (0 rows)
 
- ?column? | ?column? | status 
-----------+----------+--------
- t        | t        | READY  
+ ?column? | ?column? | status   
+----------+----------+----------
+ t        | t        | ATTACHED 
 (1 row)
 
  ?column? | ?column? | status 
@@ -301,25 +301,25 @@ DECLARE
  98 
 (37 rows)
 2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- READY  
- FINISH 
- READY  
+ status   
+----------
+ ATTACHED 
+ FINISHED 
+ READY    
 (3 rows)
 *U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
  ?column? | ?column? | status 
 ----------+----------+--------
 (0 rows)
 
- ?column? | ?column? | status 
-----------+----------+--------
- t        | t        | READY  
+ ?column? | ?column? | status   
+----------+----------+----------
+ t        | t        | ATTACHED 
 (1 row)
 
- ?column? | ?column? | status 
-----------+----------+--------
- f        | t        | FINISH 
+ ?column? | ?column? | status   
+----------+----------+----------
+ f        | t        | FINISHED 
 (1 row)
 
  ?column? | ?column? | status 
@@ -391,30 +391,30 @@ DECLARE
  100 
 (25 rows)
 2: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 *U: SELECT senderpid<>-1, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO() WHERE cursorname='c2';
  ?column? | ?column? | status 
 ----------+----------+--------
 (0 rows)
 
- ?column? | ?column? | status 
-----------+----------+--------
- f        | t        | FINISH 
+ ?column? | ?column? | status   
+----------+----------+----------
+ f        | t        | FINISHED 
 (1 row)
 
- ?column? | ?column? | status 
-----------+----------+--------
- f        | t        | FINISH 
+ ?column? | ?column? | status   
+----------+----------+----------
+ f        | t        | FINISHED 
 (1 row)
 
- ?column? | ?column? | status 
-----------+----------+--------
- f        | t        | FINISH 
+ ?column? | ?column? | status   
+----------+----------+----------
+ f        | t        | FINISHED 
 (1 row)
 
 1<:  <... completed>
@@ -530,8 +530,8 @@ DETAIL:  An endpoint can only be attached by one retrieving session.
 -- get senderpid which is endpoint execution backend
 0U: @out_sh 'get_cell PID31 3 1 ; sub "$PID31[ \t]*" senderpid31': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
  senderpid | ?column? | status
------------+----------+--------
- senderpid31| t        | READY
+-----------+----------+----------
+ senderpid31| t        | ATTACHED
 (1 row)
 -- run 'kill -s INT senderpid' to cancel the endpoint execution backend, retrieve session still can work
 42: @in_sh 'kill -s INT ${PID31} && echo "${RAW_STR}" ': SELECT 1;
@@ -660,8 +660,8 @@ DECLARE
 -- get senderpid which is endpoint execution backend
 0U: @out_sh 'get_cell PID41 3 1 ; sub "${PID41}[ \t]*" senderpid41': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
  senderpid | ?column? | status
------------+----------+--------
- senderpid41| t        | READY
+-----------+----------+----------
+ senderpid41| t        | ATTACHED
 (1 row)
 -- run 'kill -s QUIT senderpid' to cancel the endpoint execution backend, retrieve session still can work
 42: @in_sh 'kill -s QUIT ${PID41} && echo "${RAW_STR}" ': SELECT 1;
@@ -803,8 +803,8 @@ ERROR:  failed to attach non-existing endpoint endpoint_id5_2
 -- get senderpid which is endpoint execution backend
 0U: @out_sh 'get_cell PID51 3 1 ; sub "${PID51}[ \t]*" senderpid51': SELECT senderpid, receiverpid<>-1, status FROM GP_ENDPOINTS_STATUS_INFO();
  senderpid | ?column? | status
------------+----------+--------
- senderpid51| t        | READY
+-----------+----------+----------
+ senderpid51| t        | ATTACHED
 (1 row)
 -- run 'kill -s TERM senderpid' to cancel the endpoint execution backend, retrieve session still can work
 42: @in_sh 'kill -s TERM ${PID51} && echo "${RAW_STR}" ': SELECT 1;

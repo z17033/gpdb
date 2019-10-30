@@ -354,11 +354,11 @@ DECLARE
 (1 row)
 -- check all endpoint status
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -536,11 +536,11 @@ DECLARE
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -605,9 +605,9 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -667,9 +667,9 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -737,11 +737,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -819,11 +819,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -891,11 +891,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c2';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -938,9 +938,9 @@ DECLARE
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -982,9 +982,9 @@ DECLARE
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -1020,9 +1020,9 @@ DECLARE
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -1054,9 +1054,9 @@ DECLARE
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -1104,11 +1104,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -1135,9 +1135,9 @@ DECLARE
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -1444,11 +1444,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -1759,11 +1759,11 @@ ERROR:  failed to attach non-existing endpoint @ENDPOINT2
  t        
 (1 row)
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c1';
- status 
---------
- FINISH 
- FINISH 
- FINISH 
+ status   
+----------
+ FINISHED 
+ FINISHED 
+ FINISHED 
 (3 rows)
 1: ROLLBACK;
 ROLLBACK
@@ -1900,9 +1900,9 @@ DECLARE
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c22';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 1: ROLLBACK;
 ROLLBACK
@@ -1964,9 +1964,9 @@ DECLARE
 (1 row)
 -- check no endpoint info
 1: SELECT status FROM gp_endpoints_info(true) WHERE cursorname='c23';
- status 
---------
- FINISH 
+ status   
+----------
+ FINISHED 
 (1 row)
 -1Rq: ... <quitting>
 

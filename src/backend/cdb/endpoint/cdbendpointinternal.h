@@ -21,7 +21,8 @@
 
 #define GP_ENDPOINT_STATUS_READY		 "READY"
 #define GP_ENDPOINT_STATUS_RETRIEVING	 "RETRIEVING"
-#define GP_ENDPOINT_STATUS_FINISH		 "FINISH"
+#define GP_ENDPOINT_STATUS_ATTACHED		 "ATTACHED"
+#define GP_ENDPOINT_STATUS_FINISHED		 "FINISHED"
 #define GP_ENDPOINT_STATUS_RELEASED		 "RELEASED"
 
 #define ENDPOINT_KEY_TUPLE_DESC_LEN		1
@@ -49,7 +50,8 @@
 enum AttachStatus
 {
 	Status_Invalid = 0,
-	Status_Prepared,
+	Status_Ready,
+	Status_Retrieving,
 	Status_Attached,
 	Status_Finished,
 	Status_Released
