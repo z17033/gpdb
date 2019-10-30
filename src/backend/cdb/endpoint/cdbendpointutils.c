@@ -197,6 +197,12 @@ endpoint_name_equals(const char *name1, const char *name2)
 Datum
 gp_endpoints_info(PG_FUNCTION_ARGS)
 {
+	if (Gp_role != GP_ROLE_DISPATCH)
+		ereport(
+			ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
+			errmsg(
+				 "gp_endpoints_info() only can be called on query dispatcher")));
+
 	bool		allSessions = PG_GETARG_BOOL(0);
 	FuncCallContext *funcctx;
 	EndpointsInfo *mystatus;
@@ -205,16 +211,6 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 	bool		nulls[GP_ENDPOINTS_INFO_ATTRNUM] = {true};
 	HeapTuple	tuple;
 	int			res_number = 0;
-
-	if (Gp_role != GP_ROLE_DISPATCH)
-		ereport(
-			ERROR, (errcode(ERRCODE_SYNTAX_ERROR),
-			errmsg(
-				 "gp_endpoints_info() only can be called on query dispatcher")));
-
-	if (allSessions && !superuser())
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			errmsg("must be superuser to call 'GP_ENDPOINTS_INFO(TRUE)'")));
 
 	if (SRF_IS_FIRSTCALL())
 	{
