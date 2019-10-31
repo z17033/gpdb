@@ -254,7 +254,6 @@ dsm_handle
 attach_endpoint(MsgQueueStatusEntry *entry)
 {
 	const char *endpointName = entry->endpointName;
-	pid_t		attachedPid = InvalidPid;
 	dsm_handle	handle;
 
 	Assert(entry);
@@ -289,23 +288,21 @@ attach_endpoint(MsgQueueStatusEntry *entry)
 	if (endpointDesc->attachStatus == Status_Retrieving &&
 		endpointDesc->receiverPid != MyProcPid)
 	{
-		attachedPid = endpointDesc->receiverPid;
 		ereport(
 			ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("endpoint %s is already being retrieved by receiver(pid: %d)",
-					endpointName, attachedPid)));
+					endpointName, endpointDesc->receiverPid)));
 	}
 
 	if (endpointDesc->receiverPid != InvalidPid &&
 		endpointDesc->receiverPid != MyProcPid)
 	{
 		/* already attached by other process before */
-		attachedPid = endpointDesc->receiverPid;
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			   errmsg("endpoint %s is already attached by receiver(pid: %d)",
-					  endpointName, attachedPid),
+					  endpointName, endpointDesc->receiverPid),
 			  errdetail("An endpoint can only be attached by one retrieving "
 						"session.")));
 	}
@@ -316,15 +313,21 @@ attach_endpoint(MsgQueueStatusEntry *entry)
 		Assert(endpointDesc->attachStatus == Status_Finished);
 	}
 
+	/*
+	 * It's the first time for the receiver to attach to this endpoint.
+	 */
 	if (endpointDesc->receiverPid == InvalidPid)
 	{
 		endpointDesc->receiverPid = MyProcPid;
 		entry->retrieveStatus = RETRIEVE_STATUS_INIT;
-		endpointDesc->attachStatus = Status_Retrieving;
 	}
 
-	/* Not set if Status_Finished */
-	if (endpointDesc->attachStatus == Status_Ready)
+	/*
+	 * The receiver attaches to the endpoint and
+	 * begins to retrieve tuples from it.
+	 */
+	if (endpointDesc->attachStatus == Status_Ready
+			|| endpointDesc->attachStatus == Status_Attached)
 	{
 		endpointDesc->attachStatus = Status_Retrieving;
 	}
