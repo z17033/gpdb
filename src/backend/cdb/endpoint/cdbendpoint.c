@@ -1113,16 +1113,21 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 	 * reuse the previous endpoint name may cause unexpected behavior for the
 	 * retrieving session.
 	 */
+#ifdef HAVE_STRONG_RANDOM
+	int len = 0;
 	//part1:cursor name
 	int cursorLen = strlen(cursorName);
 	if (cursorLen > ENDPOINT_NAME_CURSOR_LEN)
 	{
 		cursorLen = ENDPOINT_NAME_CURSOR_LEN;
 	}
+	Assert((cursorLen + ENDPOINT_NAME_SESSIONID_LEN + ENDPOINT_NAME_RANDOM_LEN) < NAMEDATALEN);
 	memcpy(name, cursorName, cursorLen);
+	len += cursorLen;
 	//part2:sessionID
-	snprintf(name + cursorLen, ENDPOINT_NAME_SESSIONID_LEN + 1,
+	snprintf(name + len , ENDPOINT_NAME_SESSIONID_LEN + 1,
 			"%08x", sessionID);
+	len += ENDPOINT_NAME_SESSIONID_LEN;
 	//part3:random
 	char	*random = palloc(ENDPOINT_NAME_RANDOM_LEN / 2);
 	if (!pg_strong_random(random, ENDPOINT_NAME_RANDOM_LEN / 2))
@@ -1131,9 +1136,15 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 					errmsg("failed to generate a new random.")));
 	}
 	hex_encode((const char*)random, ENDPOINT_NAME_RANDOM_LEN / 2,
-			name + cursorLen + ENDPOINT_NAME_SESSIONID_LEN);
+			name + len);
 	pfree(random);
+	len += ENDPOINT_NAME_RANDOM_LEN;
+	name[len] = '\0';
+#else
+#error A strong random number source is needed.
+#endif
 }
+
 
 /*
  * session_info_clean_callback - callback when xact finished
