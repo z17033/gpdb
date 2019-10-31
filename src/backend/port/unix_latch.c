@@ -217,12 +217,12 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 	instr_time	start_time,
 				cur_time;
 	long		cur_timeout;
-	int fds_pmd = 0; // pfds[] index for WL_POSTMASTER_DEATH
-	int fds_pqd = 0; // pfds[] index for WL_ERROR_ON_LIBPQ_DEATH
 
 #ifdef HAVE_POLL
-	struct pollfd pfds[3];
+	struct pollfd pfds[4];
 	int			nfds;
+	int fds_pmd = -1; // pfds[] index for WL_POSTMASTER_DEATH
+	int fds_pqd = -1; // pfds[] index for WL_ERROR_ON_LIBPQ_DEATH
 #else
 	struct timeval tv,
 			   *tvp;
@@ -332,7 +332,7 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 
 		if (wakeEvents & WL_POSTMASTER_DEATH)
 		{
-			/* postmaster fd, if used, is always in pfds[nfds - 1] */
+			/* postmaster fd, if used, is always in pfds[fds_pmd] */
 			pfds[nfds].fd = postmaster_alive_fds[POSTMASTER_FD_WATCH];
 			pfds[nfds].events = POLLIN;
 			pfds[nfds].revents = 0;
@@ -341,7 +341,7 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 		}
 		if (wakeEvents & WL_ERROR_ON_LIBPQ_DEATH)
 		{
-			/* postmaster fd, if used, is always in pfds[nfds - 1] */
+			/* postmaster fd, if used, is always in pfds[fds_pqd] */
 			pfds[nfds].fd = MyProcPort->sock;
 			pfds[nfds].events = POLLIN;
 			pfds[nfds].revents = 0;
@@ -445,6 +445,12 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 			if (postmaster_alive_fds[POSTMASTER_FD_WATCH] > hifd)
 				hifd = postmaster_alive_fds[POSTMASTER_FD_WATCH];
 		}
+		if (wakeEvents & WL_ERROR_ON_LIBPQ_DEATH)
+		{
+			FD_SET(MyProcPort->sock, &input_mask);
+			if (MyProcPort->sock > hifd)
+				hifd = MyProcPort->sock;
+		}
 
 		if (wakeEvents & WL_SOCKET_READABLE)
 		{
@@ -510,6 +516,17 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 				 */
 				if (!PostmasterIsAlive())
 					result |= WL_POSTMASTER_DEATH;
+			}
+			if ((wakeEvents & WL_ERROR_ON_LIBPQ_DEATH) && FD_ISSET(MyProcPort->sock, &input_mask))
+			{
+				/* Error if the libpq connect is lost*/
+				pq_startmsgread();
+				if (pq_peekbyte() == EOF) {
+					ereport(ERROR,
+					        (errcode(ERRCODE_GP_INTERCONNECTION_ERROR),
+						        errmsg("Unexpected EOF on libpq connection: maybe the libpq connection is lost. ")));
+				}
+				pq_endmsgread();
 			}
 		}
 #endif   /* HAVE_POLL */
