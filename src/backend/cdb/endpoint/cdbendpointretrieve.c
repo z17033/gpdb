@@ -285,26 +285,15 @@ attach_endpoint(MsgQueueStatusEntry *entry)
 								"RETRIEVE CURSOR creator to retrieve.")));
 	}
 
-	if (endpointDesc->attachStatus == Status_Retrieving &&
-		endpointDesc->receiverPid != MyProcPid)
-	{
-		ereport(
-			ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("endpoint %s is already being retrieved by receiver(pid: %d)",
-					endpointName, endpointDesc->receiverPid)));
-	}
-
 	if (endpointDesc->receiverPid != InvalidPid &&
 		endpointDesc->receiverPid != MyProcPid)
 	{
 		/* already attached by other process before */
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errmsg("endpoint %s is already attached by receiver(pid: %d)",
-					  endpointName, endpointDesc->receiverPid),
-			  errdetail("An endpoint can only be attached by one retrieving "
-						"session.")));
+				errmsg("endpoint %s is already attached by receiver(pid: %d)",
+						endpointName, endpointDesc->receiverPid),
+				errdetail("An endpoint can only be attached by one retrieving session.")));
 	}
 
 	if (endpointDesc->senderPid == InvalidPid)
