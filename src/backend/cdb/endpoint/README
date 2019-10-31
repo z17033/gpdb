@@ -1,13 +1,12 @@
 src/backend/cdb/endpoint/README
 
-With the segment number increasing, the performance bottleneck on the
+With the size of greenplum cluster increasing, the performance bottleneck on the
 master node becomes more and more obvious.
 
 The parallel retrieve cursor feature is designed to reduce the heavy
-burdens of the master node. If possible it will not gather the result to
-the master and redirect the result to segments. When it is executed,
-user can setup retrieve mode connection to segments for retrieving
-result data in parallel.
+burdens of the master node. For a query, it can redirect the results to segments 
+instead of gathering them to the master node. When it is executed, user can setup 
+retrieve mode connections to segments for retrieving result data in parallel.
 
 
 Parallel Retrieve Cursor
@@ -16,9 +15,9 @@ Parallel Retrieve Cursor
 Like a normal cursor, user can declare a parallel retrieve cursor on
 master, then retrieve the query results on each segment directly.
 
-Parallel Retrieve Cursor has similar declaration and close syntax as
-normal cursor does. But other cursor operations are not supported
-(e.g.: MOVE).
+Parallel retrieve cursor has similar declaration and syntax as
+normal cursor does. However, some cursor operations are not supported
+in parallel retrieve cursor(e.g. MOVE).
 
 #NOTE: Orca doesn't support PARALLEL RETRIEVE CURSOR for now. It should
 fall back to postgres optimizer.
@@ -28,14 +27,14 @@ Endpoint
 
 Once a parallel retrieve cursor has been declared on QD, a corresponding
 endpoint will be created on each QE which contains the query result.
-Then, those endpoints can be used as the retrieving source to do
-retrieve in parallel on each QE.
+Then, those endpoints can be used as the source, and results can be retrieved 
+from them in parallel on each QE.
 
 
 Declare Parallel Retrieve Cursor
 ================================
 
-Before parallel retrieving in parallel, a parallel retrieve cursor
+Before retrieving data from endpoints in parallel, a parallel retrieve cursor
 variable needs to be created alongside with the query statement.
 
 Syntax:
@@ -55,7 +54,7 @@ List Parallel Retrieve Cursors and their endpoints
 ==================================================
 
 To retrieve the query results of a parallel retrieve cursor, the related
-endpoint information is needed to start a retrieve session on QEs. UDF
+endpoint information is needed before start a retrieve session on QEs. The UDF
 gp_endpoints_info(boolean) can be used to list parallel
 retrieve cursors and their endpoints information.
 
@@ -64,7 +63,7 @@ gp_endpoints_info(is_for_all_session)
 
 When is_for_all_session is false, only parallel retrieve cursors created in
 current session will be listed. Otherwise, all parallel retrieve
-cursors will be listed.
+cursors created by this user will be listed.
 
 For a superuser, it can list all endpoints info of all users', but for
 non-superuser, it can only list the current user's endpoints info for
@@ -133,7 +132,7 @@ Start A Retrieve Session
 Once a parallel retrieve cursor has been declared, retrieve sessions can
 be started on each endpoint's host by using the endpoint's token as the
 session authentication password. Runtime parameter
-"gp_session_rol=retrieve" needs to be provided to start retrieve
+"gp_session_role=retrieve" needs to be provided to start retrieve
 session.
 
 Examples:
@@ -145,7 +144,7 @@ postgres=#
 Here the "tk071500004015dc6da471b20417afed65", "mdw" and "25432" are the
 endpoint "c1_00001507_00000000"'s token, hostname and port.
 
-Multi parallel retrieve cursors can be retrieved from the same retrieve
+Multiple parallel retrieve cursors can be retrieved from the same retrieve
 session as long as their token is the same.
 
 
@@ -389,6 +388,9 @@ seg1=# RETRIEVE 1 FROM ENDPOINT c1_00001507_00000001;
 (1 row)
 
 The status of endpoint "c1_00001507_00000001" will firstly becomes "RETRIEVING", then becomes "ATTACHED".
+RETRIEVING means that a receiver is retrieving data from the endpoint. If a recevier finishes retrieving a part of data(but not retrieve all the data),
+the status becomes ATTACHED, means that this endpoint has been attached by a receiver. If the receiver has retrieved all the data from
+the endpoint, the status becomes FINISHED.
 
 -- List endpoints on master to check
 master=# SELECT * FROM GP_ENDPOINTS;
