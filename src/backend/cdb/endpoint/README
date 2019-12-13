@@ -137,7 +137,7 @@ session.
 
 Examples:
 
-$> postgres -c gp_session_rol=retrieve -h mdw -p 25432
+$> PGOPTIONS="-c gp_session_role=retrieve" psql -h mdw -p 25432 -d postgres
 Password: tk071500004015dc6da471b20417afed65
 postgres=#
 
@@ -218,7 +218,7 @@ gp_endpoints_status_info Columns:
 Examples:
 
 # Connect the segment in utility mode
-$> postgres -c gp_session_rol=utility -h mdw -p 25432
+$> PGOPTIONS="-c gp_session_role=utility" psql -h mdw -p 25432 -d postgres
 
 postgres=# select * from gp_endpoints_status_info();
                token                | databaseid | senderpid | receiverpid | status | dbid | sessionid | userid |     endpointname     | cursorname
@@ -350,8 +350,8 @@ master=# SELECT * FROM GP_ENDPOINTS;
 
 Now start a retrieve session on mdw:25432:
 
-# gp_session_rol=retrieve is needed as the runtime parameter
-$> postgres -c gp_session_rol=retrieve -h mdw -p 25432
+# gp_session_role=retrieve is needed as the runtime parameter
+$> PGOPTIONS="-c gp_session_role=retrieve" psql -h mdw -p 25432 -d postgres
 Password: tk071500004015dc6da471b20417afed65
 
 -- Retrieve all rows on this endpoint
@@ -377,7 +377,7 @@ master=# SELECT * FROM GP_ENDPOINTS;
 
 Start another retrieve session on mdw:25433
 
-$> postgres -c gp_session_rol=retrieve -h mdw -p 25433
+$> PGOPTIONS="-c gp_session_role=retrieve" psql -h mdw -p 25432 -d postgres
 Password: tk071500004015dc6da471b20417afed65
 
 -- Retrieve 1 row on this endpoint
