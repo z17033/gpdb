@@ -23,6 +23,8 @@
 #include "libpq-fe.h"
 #include "utils/builtins.h"
 
+#define atooid(x)  ((Oid) strtoul((x), NULL, 10))
+
 #define GP_ENDPOINTS_INFO_ATTRNUM 9
 
 /*
@@ -292,20 +294,14 @@ gp_endpoints_info(PG_FUNCTION_ARGS)
 
 				for (int j = 0; j < PQntuples(result); j++)
 				{
-					StrNCpy(mystatus->status[idx].name, PQgetvalue(result, j, 0),
-							NAMEDATALEN);
-					StrNCpy(mystatus->status[idx].cursorName,
-							PQgetvalue(result, j, 1), NAMEDATALEN);
-					parse_token(mystatus->status[idx].token,
-								PQgetvalue(result, j, 2));
+					StrNCpy(mystatus->status[idx].name, PQgetvalue(result, j, 0), NAMEDATALEN);
+					StrNCpy(mystatus->status[idx].cursorName, PQgetvalue(result, j, 1), NAMEDATALEN);
+					parse_token(mystatus->status[idx].token, PQgetvalue(result, j, 2));
 					mystatus->status[idx].dbid = atoi(PQgetvalue(result, j, 3));
-					mystatus->status[idx].attachStatus =
-						status_string_to_enum(PQgetvalue(result, j, 4));
-					mystatus->status[idx].senderPid =
-						atoi(PQgetvalue(result, j, 5));
-					mystatus->status[idx].userId = atoi(PQgetvalue(result, j, 6));
-					mystatus->status[idx].sessionId =
-						atoi(PQgetvalue(result, j, 7));
+					mystatus->status[idx].attachStatus = status_string_to_enum(PQgetvalue(result, j, 4));
+					mystatus->status[idx].senderPid = atoi(PQgetvalue(result, j, 5));
+					mystatus->status[idx].userId = atooid(PQgetvalue(result, j, 6));
+					mystatus->status[idx].sessionId = atoi(PQgetvalue(result, j, 7));
 					idx++;
 				}
 			}
