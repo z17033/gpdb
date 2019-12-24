@@ -1848,7 +1848,7 @@ PlanCacheComputeResultDesc(List *stmt_list)
 {
 	Query	   *query;
 
-	switch (ChoosePortalStrategy(stmt_list, false))
+	switch (ChoosePortalStrategy(stmt_list))
 	{
 		case PORTAL_ONE_SELECT:
 		case PORTAL_ONE_MOD_WITH:

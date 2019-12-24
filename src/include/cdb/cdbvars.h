@@ -102,6 +102,9 @@
  *		case GP_ROLE_UTILITY:
  *			... Act like an unmodified PostgreSQL backend. ...
  *			break;
+ *		case GP_ROLE_RETRIEVE:
+ *			... Act like simple database retrieve role from endpoint(cdbendpoint.c) ...
+ *			break;
  *		default:
  *			... Won't happen ..
  *			break;

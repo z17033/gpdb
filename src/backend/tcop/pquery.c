@@ -370,7 +370,7 @@ ProcessQuery(Portal portal,
  * See the comments in portal.h.
  */
 PortalStrategy
-ChoosePortalStrategy(List *stmts, bool parallelCursor)
+ChoosePortalStrategy(List *stmts)
 {
 	int			nSetTag;
 	ListCell   *lc;
@@ -641,7 +641,7 @@ PortalStart(Portal portal, ParamListInfo params,
 		/*
 		 * Determine the portal execution strategy
 		 */
-		portal->strategy = ChoosePortalStrategy(portal->stmts, (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) > 0);
+		portal->strategy = ChoosePortalStrategy(portal->stmts);
 
 		/* Initialize the backoff entry for this backend */
 		PortalBackoffEntryInit(portal);
