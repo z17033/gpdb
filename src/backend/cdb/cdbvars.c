@@ -489,12 +489,6 @@ assign_gp_role(const char *newval, void *extra)
 
 	Assert(newrole != GP_ROLE_UNDEFINED);
 
-	/* Retrieve role can not be reset to other mode */
-	if (oldrole == GP_ROLE_RETRIEVE && newrole != GP_ROLE_RETRIEVE)
-		ereport(ERROR,
-				(errcode(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-					errmsg("\"gp_role\" could not be changed from retrieve role")));
-
 	/*
 	 * When changing between roles, we must call cdb_cleanup and then
 	 * cdb_setup to get setup and connections appropriate to the new role.
