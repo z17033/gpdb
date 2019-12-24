@@ -1,21 +1,20 @@
-drop table if exists smallt;
+create schema eagerfree;
+set search_path=eagerfree;
 
 create table smallt (i int, t text, d date) distributed by (i);
 insert into smallt select i%10, 'text ' || (i%15), '2011-01-01'::date + ((i%20) || ' days')::interval
 from generate_series(0, 99) i;
 
-drop table if exists bigt;
-
 create table bigt (i int, t text, d date) distributed by (i);
 insert into bigt select i/10, 'text ' || (i/15), '2011-01-01'::date + ((i/20) || ' days')::interval
 from generate_series(0, 999999) i;
 
-drop table if exists smallt2;
 create table smallt2 (i int, t text, d date) distributed by (i);
 insert into smallt2 select i%5, 'text ' || (i%10), '2011-01-01'::date + ((i%15) || ' days')::interval
 from generate_series(0, 49) i;
 
 set optimizer_segments = 3;
+set gp_motion_cost_per_row = 0.1;
 
 -- HashAgg, Agg
 select d, count(*) from smallt group by d;
@@ -29,6 +28,7 @@ set statement_mem=128000;
 -- DQA
 set gp_enable_agg_distinct=off;
 set gp_eager_one_phase_agg=on;
+set gp_enable_multiphase_agg=off;
 select count(distinct d) from smallt;
 explain analyze select count(distinct d) from smallt;
 
@@ -39,6 +39,7 @@ set statement_mem=128000;
 
 set gp_enable_agg_distinct=on;
 set gp_eager_one_phase_agg=off;
+set gp_enable_multiphase_agg=on;
 
 -- Rescan on Agg (with Material in the inner side of nestloop)
 -- start_ignore
@@ -158,9 +159,6 @@ where i < all (select total from (select d, sum(i) as total from smallt group by
 and i = 0 order by 1,2,3; --order 1,2,3
 
 -- Nested Subplan
-drop table if exists eager_free_r;
-drop table if exists eager_free_s;
-drop table if exists eager_free_t;
 create table eager_free_r (r1 int, r2 int, r3 int);
 create table eager_free_s (s1 int, s2 int, s3 int);
 create table eager_free_t (t1 int, t2 int, t3 int);
@@ -170,3 +168,6 @@ insert into eager_free_t select generate_series(1, 30), generate_series(1, 6), g
 
 select * from eager_free_t where t1 > (select min(r1) from eager_free_r where r2<t2 and r3 > (Select min(s3) from eager_free_s where s1<r1));
 reset optimizer_segments;
+
+reset search_path;
+drop schema eagerfree cascade;

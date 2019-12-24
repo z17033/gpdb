@@ -32,7 +32,7 @@
  * happen, it would tie up KnownAssignedXids indefinitely, so we protect
  * ourselves by pruning the array when a valid list of running XIDs arrives.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -83,7 +83,7 @@ typedef struct ProcArrayStruct
 	 * Known assigned XIDs handling
 	 */
 	int			maxKnownAssignedXids;	/* allocated size of array */
-	int			numKnownAssignedXids;	/* currrent # of valid entries */
+	int			numKnownAssignedXids;	/* current # of valid entries */
 	int			tailKnownAssignedXids;	/* index of oldest valid element */
 	int			headKnownAssignedXids;	/* index of newest element, + 1 */
 	slock_t		known_assigned_xids_lck;		/* protects head/tail pointers */
@@ -118,6 +118,9 @@ static TMGXACT *allTmGxact;
 static TransactionId *KnownAssignedXids;
 static bool *KnownAssignedXidsValid;
 static TransactionId latestObservedXid = InvalidTransactionId;
+
+/* LWLock tranche for backend locks */
+static LWLockTranche ProcLWLockTranche;
 
 /*
  * If we're in STANDBY_SNAPSHOT_PENDING state, standbySnapshotPendingXmin is
@@ -180,6 +183,9 @@ static int KnownAssignedXidsGetAndSetXmin(TransactionId *xarray,
 static TransactionId KnownAssignedXidsGetOldestXmin(void);
 static void KnownAssignedXidsDisplay(int trace_level);
 static void KnownAssignedXidsReset(void);
+static inline void ProcArrayEndTransactionInternal(PGPROC *proc,
+								PGXACT *pgxact, TransactionId latestXid);
+static void ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid);
 
 /*
  * Report shared-memory space needed by CreateSharedProcArray.
@@ -273,6 +279,13 @@ CreateSharedProcArray(void)
 							mul_size(sizeof(bool), TOTAL_MAX_CACHED_SUBXIDS),
 							&found);
 	}
+
+	/* Register and initialize fields of ProcLWLockTranche */
+	ProcLWLockTranche.name = "proc";
+	ProcLWLockTranche.array_base = (char *) (ProcGlobal->allProcs) +
+		offsetof(PGPROC, backendLock);
+	ProcLWLockTranche.array_stride = sizeof(PGPROC);
+	LWLockRegisterTranche(LWTRANCHE_PROC, &ProcLWLockTranche);
 }
 
 /*
@@ -442,29 +455,20 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid, bool lockHeld)
 		 */
 		Assert(TransactionIdIsValid(allPgXact[proc->pgprocno].xid) ||
 			   (IsBootstrapProcessingMode() && latestXid == BootstrapTransactionId));
-		if (!lockHeld)
-			LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 
-		pgxact->xid = InvalidTransactionId;
-		proc->lxid = InvalidLocalTransactionId;
-		pgxact->xmin = InvalidTransactionId;
-		/* must be cleared with xid/xmin: */
-		pgxact->vacuumFlags &= ~PROC_VACUUM_STATE_MASK;
-		pgxact->delayChkpt = false;		/* be sure this is cleared in abort */
-		proc->recoveryConflictPending = false;
-		proc->serializableIsoLevel = false;
-
-		/* Clear the subtransaction-XID cache too while holding the lock */
-		pgxact->nxids = 0;
-		pgxact->overflowed = false;
-
-		/* Also advance global latestCompletedXid while holding the lock */
-		if (TransactionIdPrecedes(ShmemVariableCache->latestCompletedXid,
-								  latestXid))
-			ShmemVariableCache->latestCompletedXid = latestXid;
-
-		if (!lockHeld)
-			LWLockRelease(ProcArrayLock);
+		/*
+		 * If we can immediately acquire ProcArrayLock, we clear our own XID
+		 * and release the lock.  If not, use group XID clearing to improve
+		 * efficiency.
+		 */
+		if (lockHeld || LWLockConditionalAcquire(ProcArrayLock, LW_EXCLUSIVE))
+		{
+			ProcArrayEndTransactionInternal(proc, pgxact, latestXid);
+			if (!lockHeld)
+				LWLockRelease(ProcArrayLock);
+		}
+		else
+			ProcArrayGroupClearXid(proc, latestXid);
 	}
 	else
 	{
@@ -490,10 +494,159 @@ ProcArrayEndTransaction(PGPROC *proc, TransactionId latestXid, bool lockHeld)
 	}
 
 	/* Clear distributed transaction status for one-phase commit transaction */
-	if (Gp_role == GP_ROLE_EXECUTE && MyTmGxactLocal->isOnePhaseCommit)
+	if (Gp_role == GP_ROLE_EXECUTE)
 		resetGxact();
 }
 
+/*
+ * Mark a write transaction as no longer running.
+ *
+ * We don't do any locking here; caller must handle that.
+ */
+static inline void
+ProcArrayEndTransactionInternal(PGPROC *proc, PGXACT *pgxact,
+								TransactionId latestXid)
+{
+	pgxact->xid = InvalidTransactionId;
+	proc->lxid = InvalidLocalTransactionId;
+	pgxact->xmin = InvalidTransactionId;
+	/* must be cleared with xid/xmin: */
+	pgxact->vacuumFlags &= ~PROC_VACUUM_STATE_MASK;
+	pgxact->delayChkpt = false; /* be sure this is cleared in abort */
+	proc->recoveryConflictPending = false;
+	proc->serializableIsoLevel = false;
+
+	/* Clear the subtransaction-XID cache too while holding the lock */
+	pgxact->nxids = 0;
+	pgxact->overflowed = false;
+
+	/* Also advance global latestCompletedXid while holding the lock */
+	if (TransactionIdPrecedes(ShmemVariableCache->latestCompletedXid,
+							  latestXid))
+		ShmemVariableCache->latestCompletedXid = latestXid;
+}
+
+/*
+ * ProcArrayGroupClearXid -- group XID clearing
+ *
+ * When we cannot immediately acquire ProcArrayLock in exclusive mode at
+ * commit time, add ourselves to a list of processes that need their XIDs
+ * cleared.  The first process to add itself to the list will acquire
+ * ProcArrayLock in exclusive mode and perform ProcArrayEndTransactionInternal
+ * on behalf of all group members.  This avoids a great deal of contention
+ * around ProcArrayLock when many processes are trying to commit at once,
+ * since the lock need not be repeatedly handed off from one committing
+ * process to the next.
+ */
+static void
+ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid)
+{
+	volatile PROC_HDR *procglobal = ProcGlobal;
+	uint32		nextidx;
+	uint32		wakeidx;
+	int			extraWaits = -1;
+
+	/* We should definitely have an XID to clear. */
+	Assert(TransactionIdIsValid(allPgXact[proc->pgprocno].xid));
+
+	/* Add ourselves to the list of processes needing a group XID clear. */
+	proc->procArrayGroupMember = true;
+	proc->procArrayGroupMemberXid = latestXid;
+	while (true)
+	{
+		nextidx = pg_atomic_read_u32(&procglobal->procArrayGroupFirst);
+		pg_atomic_write_u32(&proc->procArrayGroupNext, nextidx);
+
+		if (pg_atomic_compare_exchange_u32(&procglobal->procArrayGroupFirst,
+										   &nextidx,
+										   (uint32) proc->pgprocno))
+			break;
+	}
+
+	/*
+	 * If the list was not empty, the leader will clear our XID.  It is
+	 * impossible to have followers without a leader because the first process
+	 * that has added itself to the list will always have nextidx as
+	 * INVALID_PGPROCNO.
+	 */
+	if (nextidx != INVALID_PGPROCNO)
+	{
+		/* Sleep until the leader clears our XID. */
+		for (;;)
+		{
+			/* acts as a read barrier */
+			PGSemaphoreLock(&proc->sem);
+			if (!proc->procArrayGroupMember)
+				break;
+			extraWaits++;
+		}
+
+		Assert(pg_atomic_read_u32(&proc->procArrayGroupNext) == INVALID_PGPROCNO);
+
+		/* Fix semaphore count for any absorbed wakeups */
+		while (extraWaits-- > 0)
+			PGSemaphoreUnlock(&proc->sem);
+		return;
+	}
+
+	/* We are the leader.  Acquire the lock on behalf of everyone. */
+	LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
+
+	/*
+	 * Now that we've got the lock, clear the list of processes waiting for
+	 * group XID clearing, saving a pointer to the head of the list.  Trying
+	 * to pop elements one at a time could lead to an ABA problem.
+	 */
+	while (true)
+	{
+		nextidx = pg_atomic_read_u32(&procglobal->procArrayGroupFirst);
+		if (pg_atomic_compare_exchange_u32(&procglobal->procArrayGroupFirst,
+										   &nextidx,
+										   INVALID_PGPROCNO))
+			break;
+	}
+
+	/* Remember head of list so we can perform wakeups after dropping lock. */
+	wakeidx = nextidx;
+
+	/* Walk the list and clear all XIDs. */
+	while (nextidx != INVALID_PGPROCNO)
+	{
+		PGPROC	   *proc = &allProcs[nextidx];
+		PGXACT	   *pgxact = &allPgXact[nextidx];
+
+		ProcArrayEndTransactionInternal(proc, pgxact, proc->procArrayGroupMemberXid);
+
+		/* Move to next proc in list. */
+		nextidx = pg_atomic_read_u32(&proc->procArrayGroupNext);
+	}
+
+	/* We're done with the lock now. */
+	LWLockRelease(ProcArrayLock);
+
+	/*
+	 * Now that we've released the lock, go back and wake everybody up.  We
+	 * don't do this under the lock so as to keep lock hold times to a
+	 * minimum.  The system calls we need to perform to wake other processes
+	 * up are probably much slower than the simple memory writes we did while
+	 * holding the lock.
+	 */
+	while (wakeidx != INVALID_PGPROCNO)
+	{
+		PGPROC	   *proc = &allProcs[wakeidx];
+
+		wakeidx = pg_atomic_read_u32(&proc->procArrayGroupNext);
+		pg_atomic_write_u32(&proc->procArrayGroupNext, INVALID_PGPROCNO);
+
+		/* ensure all previous writes are visible before follower continues. */
+		pg_write_barrier();
+
+		proc->procArrayGroupMember = false;
+
+		if (proc != MyProc)
+			PGSemaphoreUnlock(&proc->sem);
+	}
+}
 
 /*
  * ProcArrayClearTransaction -- clear the transaction fields
@@ -545,8 +698,8 @@ ProcArrayInitRecovery(TransactionId initializedUptoXID)
 	Assert(TransactionIdIsNormal(initializedUptoXID));
 
 	/*
-	 * we set latestObservedXid to the xid SUBTRANS has been initialized upto,
-	 * so we can extend it from that point onwards in
+	 * we set latestObservedXid to the xid SUBTRANS has been initialized up
+	 * to, so we can extend it from that point onwards in
 	 * RecordKnownAssignedTransactionIds, and when we get consistent in
 	 * ProcArrayApplyRecoveryInfo().
 	 */
@@ -1493,29 +1646,24 @@ updateSharedLocalSnapshot(DtxContextInfo *dtxContextInfo,
 
 	SetSharedTransactionId_writer(distributedTransactionContext);
 	
-	SharedLocalSnapshotSlot->QDcid = dtxContextInfo->curcid;
 	SharedLocalSnapshotSlot->QDxid = dtxContextInfo->distributedXid;
-
+	SharedLocalSnapshotSlot->segmateSync = dtxContextInfo->segmateSync;
 	SharedLocalSnapshotSlot->ready = true;
 
-	SharedLocalSnapshotSlot->segmateSync = dtxContextInfo->segmateSync;
-
 	ereport((Debug_print_full_dtm ? LOG : DEBUG5),
-			(errmsg("updateSharedLocalSnapshot for DistributedTransactionContext = '%s' setting shared local snapshot xid = %u (xmin: %u xmax: %u xcnt: %u) curcid: %d, QDxid = %u, QDcid = %u",
+			(errmsg("updateSharedLocalSnapshot for DistributedTransactionContext = '%s' setting shared local snapshot xid = %u (xmin: %u xmax: %u xcnt: %u) curcid: %d, QDxid = %u",
 					DtxContextToString(distributedTransactionContext),
 					SharedLocalSnapshotSlot->xid,
 					SharedLocalSnapshotSlot->snapshot.xmin,
 					SharedLocalSnapshotSlot->snapshot.xmax,
 					SharedLocalSnapshotSlot->snapshot.xcnt,
 					SharedLocalSnapshotSlot->snapshot.curcid,
-					SharedLocalSnapshotSlot->QDxid,
-					SharedLocalSnapshotSlot->QDcid)));
+					SharedLocalSnapshotSlot->QDxid)));
 
 	ereport((Debug_print_snapshot_dtm ? LOG : DEBUG5),
-			(errmsg("[Distributed Snapshot #%u] *Writer Set Shared* gxid %u, currcid %d (gxid = %u, slot #%d, '%s', '%s')",
+			(errmsg("[Distributed Snapshot #%u] *Writer Set Shared* gxid %u, (gxid = %u, slot #%d, '%s', '%s')",
 					QEDtxContextInfo.distributedSnapshot.distribSnapshotId,
 					SharedLocalSnapshotSlot->QDxid,
-					SharedLocalSnapshotSlot->QDcid,
 					getDistributedTransactionId(),
 					SharedLocalSnapshotSlot->slotid,
 					debugCaller,
@@ -1639,11 +1787,13 @@ readerFillLocalSnapshot(Snapshot snapshot, DtxContext distributedTransactionCont
 	{
 		LWLockAcquire(SharedLocalSnapshotSlot->slotLock, LW_SHARED);
 
-		if (QEDtxContextInfo.distributedXid == SharedLocalSnapshotSlot->QDxid &&
-			QEDtxContextInfo.curcid == SharedLocalSnapshotSlot->QDcid &&
-			QEDtxContextInfo.segmateSync == SharedLocalSnapshotSlot->segmateSync &&
+		if (QEDtxContextInfo.segmateSync == SharedLocalSnapshotSlot->segmateSync &&
 			SharedLocalSnapshotSlot->ready)
 		{
+			if (QEDtxContextInfo.distributedXid != SharedLocalSnapshotSlot->QDxid)
+				elog(ERROR, "transaction ID doesn't match between the reader gang "
+							"and the writer gang, expect %d but having %d",
+							QEDtxContextInfo.distributedXid, SharedLocalSnapshotSlot->QDxid);
 			copyLocalSnapshot(snapshot);
 			SetSharedTransactionId_reader(SharedLocalSnapshotSlot->xid, snapshot->curcid, distributedTransactionContext);
 			LWLockRelease(SharedLocalSnapshotSlot->slotLock);
@@ -1658,13 +1808,13 @@ readerFillLocalSnapshot(Snapshot snapshot, DtxContext distributedTransactionCont
 					 errmsg("GetSnapshotData timed out waiting for Writer to set the shared snapshot."),
 					 errdetail("We are waiting for the shared snapshot to have XID: %d but the value "
 							   "is currently: %d."
-							   " waiting for cid to be %d but is currently %d.  ready=%d."
+							   " waiting for syncount to be %d but is currently %d.  ready=%d."
 							   "DistributedTransactionContext = %s. "
 							   " Our slotindex is: %d \n"
 							   "Dump of all sharedsnapshots in shmem: %s",
 							   QEDtxContextInfo.distributedXid, SharedLocalSnapshotSlot->QDxid,
-							   QEDtxContextInfo.curcid,
-							   SharedLocalSnapshotSlot->QDcid, SharedLocalSnapshotSlot->ready,
+							   QEDtxContextInfo.segmateSync,
+							   SharedLocalSnapshotSlot->segmateSync, SharedLocalSnapshotSlot->ready,
 							   DtxContextToString(distributedTransactionContext),
 							   SharedLocalSnapshotSlot->slotindex, SharedSnapshotDump())));
 		}
@@ -1675,25 +1825,22 @@ readerFillLocalSnapshot(Snapshot snapshot, DtxContext distributedTransactionCont
 			 * Every second issue warning.
 			 */
 			ereport((Debug_print_snapshot_dtm ? LOG : DEBUG5),
-					(errmsg("[Distributed Snapshot #%u] *No Match* gxid %u = %u and currcid %d = %d (%s)",
+					(errmsg("[Distributed Snapshot #%u] *No Match* gxid %u = %u and segmateSync %d = %d (%s)",
 							QEDtxContextInfo.distributedSnapshot.distribSnapshotId,
 							QEDtxContextInfo.distributedXid,
 							SharedLocalSnapshotSlot->QDxid,
-							QEDtxContextInfo.curcid,
-							SharedLocalSnapshotSlot->QDcid,
+							QEDtxContextInfo.segmateSync,
+							SharedLocalSnapshotSlot->segmateSync,
 							DtxContextToString(distributedTransactionContext))));
 
 			ereport(LOG,
 					(errmsg("GetSnapshotData did not find shared local snapshot information. "
 							"We are waiting for the shared snapshot to have XID: %d/%u but the value "
-							"is currently: %d/%u."
-							" waiting for cid to be %d but is currently %d.  ready=%d."
+							"is currently: %d/%u, ready=%d."
 							" Our slotindex is: %d \n"
 							"DistributedTransactionContext = %s.",
 							QEDtxContextInfo.distributedXid, QEDtxContextInfo.segmateSync,
 							SharedLocalSnapshotSlot->QDxid, SharedLocalSnapshotSlot->segmateSync,
-							QEDtxContextInfo.curcid,
-							SharedLocalSnapshotSlot->QDcid,
 							SharedLocalSnapshotSlot->ready,
 							SharedLocalSnapshotSlot->slotindex,
 							DtxContextToString(distributedTransactionContext))));
@@ -1819,7 +1966,7 @@ getDtxCheckPointInfo(char **result, int *result_size)
 		TMGXACT_LOG *gxact_log;
 		TMGXACT *gxact = &allTmGxact[arrayP->pgprocnos[i]];
 
-		if (!gxact->needIncludedInCkpt)
+		if (!gxact->includeInCkpt)
 			continue;
 
 		gxact_log = &gxact_log_array[actual];
@@ -2432,6 +2579,27 @@ GetSnapshotData(Snapshot snapshot, DtxContext distributedTransactionContext)
 		updateSharedLocalSnapshot(&QEDtxContextInfo, distributedTransactionContext, snapshot, "GetSnapshotData");
 	}
 
+	if (old_snapshot_threshold < 0)
+	{
+		/*
+		 * If not using "snapshot too old" feature, fill related fields with
+		 * dummy values that don't require any locking.
+		 */
+		snapshot->lsn = InvalidXLogRecPtr;
+		snapshot->whenTaken = 0;
+	}
+	else
+	{
+		/*
+		 * Capture the current time and WAL stream location in case this
+		 * snapshot becomes old enough to need to fall back on the special
+		 * "old snapshot" logic.
+		 */
+		snapshot->lsn = GetXLogInsertRecPtr();
+		snapshot->whenTaken = GetSnapshotCurrentTimestamp();
+		MaintainOldSnapshotTimeMapping(snapshot->whenTaken, xmin);
+	}
+
 	ereport((Debug_print_snapshot_dtm ? LOG : DEBUG5),
 			(errmsg("GetSnapshotData(): WRITER currentcommandid %d curcid %d segmatesync %d",
 					GetCurrentCommandId(false), snapshot->curcid, QEDtxContextInfo.segmateSync)));
@@ -3027,10 +3195,9 @@ UpdateSerializableCommandId(CommandId curcid)
 		}
 
 		ereport((Debug_print_snapshot_dtm ? LOG : DEBUG5),
-				(errmsg("[Distributed Snapshot #%u] *Update Serializable Command Id* segment currcid = %d, QDcid = %d, TransactionSnapshot currcid = %d, Shared currcid = %d (gxid = %u, '%s')",
+				(errmsg("[Distributed Snapshot #%u] *Update Serializable Command Id* segment currcid = %d, TransactionSnapshot currcid = %d, Shared currcid = %d (gxid = %u, '%s')",
 						QEDtxContextInfo.distributedSnapshot.distribSnapshotId,
 						QEDtxContextInfo.curcid,
-						SharedLocalSnapshotSlot->QDcid,
 						curcid,
 						SharedLocalSnapshotSlot->snapshot.curcid,
 						getDistributedTransactionId(),
@@ -3047,7 +3214,6 @@ UpdateSerializableCommandId(CommandId curcid)
 			   combocidSize * sizeof(ComboCidKeyData));
 
 		SharedLocalSnapshotSlot->snapshot.curcid = curcid;
-		SharedLocalSnapshotSlot->QDcid = QEDtxContextInfo.curcid;
 		SharedLocalSnapshotSlot->segmateSync = QEDtxContextInfo.segmateSync;
 
 		LWLockRelease(SharedLocalSnapshotSlot->slotLock);
@@ -3064,14 +3230,35 @@ UpdateSerializableCommandId(CommandId curcid)
 PGPROC *
 BackendPidGetProc(int pid)
 {
+	PGPROC	   *result;
+
+	if (pid == 0)				/* never match dummy PGPROCs */
+		return NULL;
+
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+
+	result = BackendPidGetProcWithLock(pid);
+
+	LWLockRelease(ProcArrayLock);
+
+	return result;
+}
+
+/*
+ * BackendPidGetProcWithLock -- get a backend's PGPROC given its PID
+ *
+ * Same as above, except caller must be holding ProcArrayLock.  The found
+ * entry, if any, can be assumed to be valid as long as the lock remains held.
+ */
+PGPROC *
+BackendPidGetProcWithLock(int pid)
+{
 	PGPROC	   *result = NULL;
 	ProcArrayStruct *arrayP = procArray;
 	int			index;
 
 	if (pid == 0)				/* never match dummy PGPROCs */
 		return NULL;
-
-	LWLockAcquire(ProcArrayLock, LW_SHARED);
 
 	for (index = 0; index < arrayP->numProcs; index++)
 	{
@@ -3083,8 +3270,6 @@ BackendPidGetProc(int pid)
 			break;
 		}
 	}
-
-	LWLockRelease(ProcArrayLock);
 
 	return result;
 }
@@ -3301,8 +3486,11 @@ GetConflictingVirtualXIDs(TransactionId limitXmin, Oid dbOid)
 
 			/*
 			 * We ignore an invalid pxmin because this means that backend has
-			 * no snapshot and cannot get another one while we hold exclusive
-			 * lock.
+			 * no snapshot currently. We hold a Share lock to avoid contention
+			 * with users taking snapshots.  That is not a problem because the
+			 * current xmin is always at least one higher than the latest
+			 * removed xid, so any new snapshot would never conflict with the
+			 * test here.
 			 */
 			if (!TransactionIdIsValid(limitXmin) ||
 				(TransactionIdIsValid(pxmin) && !TransactionIdFollows(pxmin, limitXmin)))
@@ -3402,7 +3590,7 @@ MinimumActiveBackends(int min)
 
 		/*
 		 * Since we're not holding a lock, need to be prepared to deal with
-		 * garbage, as someone could have incremented numPucs but not yet
+		 * garbage, as someone could have incremented numProcs but not yet
 		 * filled the structure.
 		 *
 		 * If someone just decremented numProcs, 'proc' could also point to a
@@ -4510,8 +4698,6 @@ static int
 KnownAssignedXidsGetAndSetXmin(TransactionId *xarray, TransactionId *xmin,
 							   TransactionId xmax)
 {
-	/* use volatile pointer to prevent code rearrangement */
-	volatile ProcArrayStruct *pArray = procArray;
 	int			count = 0;
 	int			head,
 				tail;
@@ -4526,10 +4712,10 @@ KnownAssignedXidsGetAndSetXmin(TransactionId *xarray, TransactionId *xmin,
 	 *
 	 * Must take spinlock to ensure we see up-to-date array contents.
 	 */
-	SpinLockAcquire(&pArray->known_assigned_xids_lck);
-	tail = pArray->tailKnownAssignedXids;
-	head = pArray->headKnownAssignedXids;
-	SpinLockRelease(&pArray->known_assigned_xids_lck);
+	SpinLockAcquire(&procArray->known_assigned_xids_lck);
+	tail = procArray->tailKnownAssignedXids;
+	head = procArray->headKnownAssignedXids;
+	SpinLockRelease(&procArray->known_assigned_xids_lck);
 
 	for (i = tail; i < head; i++)
 	{
@@ -4569,8 +4755,6 @@ KnownAssignedXidsGetAndSetXmin(TransactionId *xarray, TransactionId *xmin,
 static TransactionId
 KnownAssignedXidsGetOldestXmin(void)
 {
-	/* use volatile pointer to prevent code rearrangement */
-	volatile ProcArrayStruct *pArray = procArray;
 	int			head,
 				tail;
 	int			i;
@@ -4578,10 +4762,10 @@ KnownAssignedXidsGetOldestXmin(void)
 	/*
 	 * Fetch head just once, since it may change while we loop.
 	 */
-	SpinLockAcquire(&pArray->known_assigned_xids_lck);
-	tail = pArray->tailKnownAssignedXids;
-	head = pArray->headKnownAssignedXids;
-	SpinLockRelease(&pArray->known_assigned_xids_lck);
+	SpinLockAcquire(&procArray->known_assigned_xids_lck);
+	tail = procArray->tailKnownAssignedXids;
+	head = procArray->headKnownAssignedXids;
+	SpinLockRelease(&procArray->known_assigned_xids_lck);
 
 	for (i = tail; i < head; i++)
 	{

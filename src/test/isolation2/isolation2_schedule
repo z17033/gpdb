@@ -21,6 +21,10 @@ test: unlogged_heap_tables
 test: unlogged_appendonly_tables
 test: udf_exception_blocks_panic_scenarios
 
+# Tests for packcore, will use the coredumps generated in crash_recovery_dtm,
+# so must be scheduled after that one.
+test: packcore
+
 # Tests on global deadlock detector
 test: gdd/prepare
 test: gdd/dist-deadlock-01 gdd/dist-deadlock-04 gdd/dist-deadlock-05 gdd/dist-deadlock-06 gdd/dist-deadlock-07 gdd/dist-deadlock-102 gdd/dist-deadlock-103 gdd/dist-deadlock-104 gdd/dist-deadlock-106 gdd/non-lock-105
@@ -64,6 +68,7 @@ test: commit_transaction_block_checkpoint
 test: instr_in_shmem_setup
 test: instr_in_shmem_terminate
 test: vacuum_recently_dead_tuple_due_to_distributed_snapshot
+test: distributedlog-bug
 test: invalidated_toast_index
 test: distributed_snapshot
 test: gp_collation
@@ -71,6 +76,9 @@ test: ao_upgrade
 
 # below test utilizes fault injectors so it needs to be in a group by itself
 test: external_table
+
+# This test validates that for AO we delay fsync to checkpointer on mirror.
+test: fsync_ao
 
 # Tests on Append-Optimized tables (row-oriented).
 test: concurrent_index_creation_should_not_deadlock
@@ -225,9 +233,3 @@ ignore: restore_memory_accounting_default
 test: setup_startup_memory_accounting
 test: oom_startup_memory
 test: restore_memory_accounting_default
-
-# Too many exec accounts test start
-test: setup_too_many_exec_accounts
-test: oom_too_many_accounts
-test: restore_memory_accounting_default
-#Too many exec account tests end

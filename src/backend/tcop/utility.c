@@ -5,7 +5,7 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -153,47 +153,6 @@ check_xact_readonly(Node *parsetree)
 
 	switch (nodeTag(parsetree))
 	{
-		case T_CreateStmt:
-			{
-				CreateStmt *createStmt;
-
-				createStmt = (CreateStmt *) parsetree;
-
-				if (createStmt->relation->relpersistence == RELPERSISTENCE_TEMP)
-					return;		// Permit creation of TEMPORARY tables in read-only mode.
-
-				ereport(ERROR,
-						(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-						 errmsg("transaction is read-only")));
-			}
-			break;
-
-		case T_DropStmt:
-			{
-				DropStmt   *dropStmt = (DropStmt *) parsetree;
-				ListCell   *arg;
-
-				/*
-				 * So, if DROP TABLE is used, all objects must be
-				 * temporary tables.
-				 */
-				foreach(arg, dropStmt->objects)
-				{
-					List	   *names = (List *) lfirst(arg);
-					RangeVar   *rel;
-
-					rel = makeRangeVarFromNameList(names);
-
-					if (dropStmt->removeType != OBJECT_TABLE ||
-					    !RelationToRemoveIsTemp(rel, dropStmt->missing_ok))
-						ereport(ERROR,
-								(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-								 errmsg("transaction is read-only")));
-
-				}
-			}
-			return;		// All objects are TEMPORARY tables.
-
 		case T_AlterDatabaseStmt:
 		case T_AlterDatabaseSetStmt:
 		case T_AlterDomainStmt:
@@ -202,8 +161,10 @@ check_xact_readonly(Node *parsetree)
 		case T_AlterResourceGroupStmt:
 		case T_AlterRoleStmt:
 		case T_AlterRoleSetStmt:
+		case T_AlterObjectDependsStmt:
 		case T_AlterObjectSchemaStmt:
 		case T_AlterOwnerStmt:
+		case T_AlterOperatorStmt:
 		case T_AlterSeqStmt:
 		case T_AlterTableMoveAllStmt:
 		case T_AlterTableStmt:
@@ -228,6 +189,7 @@ check_xact_readonly(Node *parsetree)
 		case T_RuleStmt:
 		case T_CreateSchemaStmt:
 		case T_CreateSeqStmt:
+		case T_CreateStmt:
 		case T_CreateExternalStmt:
 		case T_CreateTableAsStmt:
 		case T_RefreshMatViewStmt:
@@ -239,6 +201,7 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateRangeStmt:
 		case T_AlterEnumStmt:
 		case T_ViewStmt:
+		case T_DropStmt:
 		case T_DropdbStmt:
 		case T_DropTableSpaceStmt:
 		case T_DropQueueStmt:
@@ -1036,6 +999,19 @@ standard_ProcessUtility(Node *parsetree,
 									   dest, completionTag);
 				else
 					ExecRenameStmt(stmt);
+			}
+			break;
+
+		case T_AlterObjectDependsStmt:
+			{
+				AlterObjectDependsStmt *stmt = (AlterObjectDependsStmt *) parsetree;
+
+				if (EventTriggerSupportsObjectType(stmt->objectType))
+					ProcessUtilitySlow(parsetree, queryString,
+									   context, params,
+									   dest, completionTag);
+				else
+					ExecAlterObjectDependsStmt(stmt, NULL);
 			}
 			break;
 
@@ -1863,6 +1839,12 @@ ProcessUtilitySlow(Node *parsetree,
 				address = ExecRenameStmt((RenameStmt *) parsetree);
 				break;
 
+			case T_AlterObjectDependsStmt:
+				address =
+					ExecAlterObjectDependsStmt((AlterObjectDependsStmt *) parsetree,
+											   &secondaryObject);
+				break;
+
 			case T_AlterObjectSchemaStmt:
 				address =
 					ExecAlterObjectSchemaStmt((AlterObjectSchemaStmt *) parsetree,
@@ -1871,6 +1853,10 @@ ProcessUtilitySlow(Node *parsetree,
 
 			case T_AlterOwnerStmt:
 				address = ExecAlterOwnerStmt((AlterOwnerStmt *) parsetree);
+				break;
+
+			case T_AlterOperatorStmt:
+				address = AlterOperator((AlterOperatorStmt *) parsetree);
 				break;
 
 			case T_CommentStmt:
@@ -1905,6 +1891,10 @@ ProcessUtilitySlow(Node *parsetree,
 
 			case T_SecLabelStmt:
 				address = ExecSecLabelStmt((SecLabelStmt *) parsetree);
+				break;
+
+			case T_CreateAmStmt:
+				address = CreateAccessMethod((CreateAmStmt *) parsetree);
 				break;
 
 			default:
@@ -2637,6 +2627,9 @@ CreateCommandTag(Node *parsetree)
 				case OBJECT_TRANSFORM:
 					tag = "DROP TRANSFORM";
 					break;
+				case OBJECT_ACCESS_METHOD:
+					tag = "DROP ACCESS METHOD";
+					break;
 				default:
 					tag = "???";
 			}
@@ -2660,6 +2653,10 @@ CreateCommandTag(Node *parsetree)
 
 		case T_RenameStmt:
 			tag = AlterObjectTypeCommandTag(((RenameStmt *) parsetree)->renameType);
+			break;
+
+		case T_AlterObjectDependsStmt:
+			tag = AlterObjectTypeCommandTag(((AlterObjectDependsStmt *) parsetree)->objectType);
 			break;
 
 		case T_AlterObjectSchemaStmt:
@@ -2735,6 +2732,9 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_COLLATION:
 					tag = "CREATE COLLATION";
+					break;
+				case OBJECT_ACCESS_METHOD:
+					tag = "CREATE ACCESS METHOD";
 					break;
 				default:
 					tag = "???";
@@ -3003,6 +3003,10 @@ CreateCommandTag(Node *parsetree)
 			tag = "ALTER OPERATOR FAMILY";
 			break;
 
+		case T_AlterOperatorStmt:
+			tag = "ALTER OPERATOR";
+			break;
+
 		case T_AlterTSDictionaryStmt:
 			tag = "ALTER TEXT SEARCH DICTIONARY";
 			break;
@@ -3017,6 +3021,10 @@ CreateCommandTag(Node *parsetree)
 
 		case T_AlterPolicyStmt:
 			tag = "ALTER POLICY";
+			break;
+
+		case T_CreateAmStmt:
+			tag = "CREATE ACCESS METHOD";
 			break;
 
 		case T_PrepareStmt:
@@ -3321,6 +3329,10 @@ GetCommandLogLevel(Node *parsetree)
 			lev = LOGSTMT_DDL;
 			break;
 
+		case T_AlterObjectDependsStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
 		case T_AlterObjectSchemaStmt:
 			lev = LOGSTMT_DDL;
 			break;
@@ -3586,6 +3598,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_AlterTSConfigurationStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreateAmStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

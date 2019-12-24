@@ -9,7 +9,7 @@
  *
  * Portions Copyright (c) 2005-2008, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -74,7 +74,7 @@
  *
  *		This should show how the executor works by having
  *		ExecInitNode(), ExecProcNode() and ExecEndNode() dispatch
- *		their work to the appopriate node support routines which may
+ *		their work to the appropriate node support routines which may
  *		in turn call these routines themselves on their subplans.
  */
 #include "postgres.h"
@@ -103,6 +103,7 @@
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNestloop.h"
+#include "executor/nodeGather.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -116,12 +117,12 @@
 #include "executor/nodeValuesscan.h"
 #include "executor/nodeWindowAgg.h"
 #include "executor/nodeWorktablescan.h"
+#include "nodes/nodeFuncs.h"
 #include "miscadmin.h"
 
 #include "cdb/cdbvars.h"
 #include "cdb/ml_ipc.h"			/* interconnect context */
 #include "executor/nodeAssertOp.h"
-#include "executor/nodeDML.h"
 #include "executor/nodeDynamicIndexscan.h"
 #include "executor/nodeDynamicSeqscan.h"
 #include "executor/nodeExternalscan.h"
@@ -218,21 +219,6 @@ setSubplanSliceId(SubPlan *subplan, EState *estate)
 
 	estate->currentSliceIdInPlan =
 		estate->es_plannedstmt->subplan_sliceIds[subplan->plan_id];
-
-	/*
-	 * The slice that the initPlan will be running is the same as the root
-	 * slice. Depending on the location of InitPlan in the plan, the root
-	 * slice is the root slice of the whole plan, or the root slice of the
-	 * parent subplan of this InitPlan.
-	 */
-	if (Gp_role == GP_ROLE_DISPATCH)
-	{
-		estate->currentExecutingSliceId = RootSliceIndex(estate);
-	}
-	else
-	{
-		estate->currentExecutingSliceId = estate->rootSliceId;
-	}
 }
 
 
@@ -266,7 +252,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 
 	Assert(estate != NULL);
 	int			origSliceIdInPlan = estate->currentSliceIdInPlan;
-	int			origExecutingSliceId = estate->currentExecutingSliceId;
 
 	MemoryAccountIdType curMemoryAccountId;
 
@@ -719,6 +704,17 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 			END_MEMORY_ACCOUNT();
 			break;
 
+		case T_Gather:
+			curMemoryAccountId = CREATE_EXECUTOR_MEMORY_ACCOUNT(isAlienPlanNode, node, Gather);
+
+			START_MEMORY_ACCOUNT(curMemoryAccountId);
+			{
+			result = (PlanState *) ExecInitGather((Gather *) node,
+												  estate, eflags);
+			}
+			END_MEMORY_ACCOUNT();
+			break;
+
 		case T_Hash:
 			curMemoryAccountId = CREATE_EXECUTOR_MEMORY_ACCOUNT(isAlienPlanNode, node, Hash);
 
@@ -784,16 +780,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 			}
 			END_MEMORY_ACCOUNT();
 			break;
-		case T_DML:
-			curMemoryAccountId = CREATE_EXECUTOR_MEMORY_ACCOUNT(isAlienPlanNode, node, DML);
-
-			START_MEMORY_ACCOUNT(curMemoryAccountId);
-			{
-			result = (PlanState *) ExecInitDML((DML *) node,
-												  estate, eflags);
-			}
-			END_MEMORY_ACCOUNT();
-			break;
 		case T_SplitUpdate:
 			curMemoryAccountId = CREATE_EXECUTOR_MEMORY_ACCOUNT(isAlienPlanNode, node, SplitUpdate);
 
@@ -841,7 +827,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	}
 
 	estate->currentSliceIdInPlan = origSliceIdInPlan;
-	estate->currentExecutingSliceId = origExecutingSliceId;
 
 	/*
 	 * Initialize any initPlans present in this node.  The planner put them in
@@ -864,7 +849,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		result->initPlan = subps;
 
 	estate->currentSliceIdInPlan = origSliceIdInPlan;
-	estate->currentExecutingSliceId = origExecutingSliceId;
 
 	/* Set up instrumentation for this node if requested */
 	if (estate->es_instrument && result != NULL)
@@ -1129,6 +1113,10 @@ ExecProcNode(PlanState *node)
 			result = ExecUnique((UniqueState *) node);
 			break;
 
+		case T_GatherState:
+			result = ExecGather((GatherState *) node);
+			break;
+
 		case T_HashState:
 			result = ExecHash((HashState *) node);
 			break;
@@ -1155,10 +1143,6 @@ ExecProcNode(PlanState *node)
 
 		case T_RepeatState:
 			result = ExecRepeat((RepeatState *) node);
-			break;
-
-		case T_DMLState:
-			result = ExecDML((DMLState *) node);
 			break;
 
 		case T_SplitUpdateState:
@@ -1275,31 +1259,6 @@ MultiExecProcNode(PlanState *node)
 	return result;
 }
 
-static CdbVisitOpt
-transportUpdateNodeWalker(PlanState *node, void *context)
-{
-	/*
-	 * For motion nodes, we just transfer the context information established
-	 * during SetupInterconnect
-	 */
-	if (IsA(node, MotionState))
-	{
-		node->state->interconnect_context = (ChunkTransportState *) context;
-		/* visit subtree */
-	}
-
-	return CdbVisit_Walk;
-}	/* transportUpdateNodeWalker */
-
-void
-ExecUpdateTransportState(PlanState *node, ChunkTransportState * state)
-{
-	Assert(node);
-	Assert(state);
-	planstate_walk_node(node, transportUpdateNodeWalker, state);
-}	/* ExecUpdateTransportState */
-
-
 /* ----------------------------------------------------------------
  *		ExecEndNode
  *
@@ -1324,10 +1283,8 @@ ExecEndNode(PlanState *node)
 
 	Assert(estate != NULL);
 	int			origSliceIdInPlan = estate->currentSliceIdInPlan;
-	int			origExecutingSliceId = estate->currentExecutingSliceId;
 
 	estate->currentSliceIdInPlan = origSliceIdInPlan;
-	estate->currentExecutingSliceId = origExecutingSliceId;
 
 	if (node->chgParam != NULL)
 	{
@@ -1393,6 +1350,10 @@ ExecEndNode(PlanState *node)
 			break;
 		case T_SampleScanState:
 			ExecEndSampleScan((SampleScanState *) node);
+			break;
+
+		case T_GatherState:
+			ExecEndGather((GatherState *) node);
 			break;
 
 		case T_IndexScanState:
@@ -1535,9 +1496,6 @@ ExecEndNode(PlanState *node)
 			/*
 			 * DML nodes
 			 */
-		case T_DMLState:
-			ExecEndDML((DMLState *) node);
-			break;
 		case T_SplitUpdateState:
 			ExecEndSplitUpdate((SplitUpdateState *) node);
 			break;
@@ -1560,7 +1518,6 @@ ExecEndNode(PlanState *node)
 		(*query_info_collect_hook)(METRICS_PLAN_NODE_FINISHED, node);
 
 	estate->currentSliceIdInPlan = origSliceIdInPlan;
-	estate->currentExecutingSliceId = origExecutingSliceId;
 }
 
 
@@ -1841,3 +1798,31 @@ planstate_walk_kids(PlanState *planstate,
 
 	return v;
 }	/* planstate_walk_kids */
+
+/*
+ * ExecShutdownNode
+ *
+ * Give execution nodes a chance to stop asynchronous resource consumption
+ * and release any resources still held.  Currently, this is only used for
+ * parallel query, but we might want to extend it to other cases also (e.g.
+ * FDW).  We might also want to call it sooner, as soon as it's evident that
+ * no more rows will be needed (e.g. when a Limit is filled) rather than only
+ * at the end of ExecutorRun.
+ */
+bool
+ExecShutdownNode(PlanState *node)
+{
+	if (node == NULL)
+		return false;
+
+	switch (nodeTag(node))
+	{
+		case T_GatherState:
+			ExecShutdownGather((GatherState *) node);
+			break;
+		default:
+			break;
+	}
+
+	return planstate_tree_walker(node, ExecShutdownNode, NULL);
+}

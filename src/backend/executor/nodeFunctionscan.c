@@ -5,7 +5,7 @@
  *
  * Portions Copyright (c) 2006-2008, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -133,6 +133,16 @@ FunctionNext_guts(FunctionScanState *node)
 									   ScanDirectionIsForward(direction),
 									   false,
 									   scanslot);
+
+		/*
+		 * CDB: Label each row with a synthetic ctid if needed for subquery dedup.
+		 */
+		if (node->cdb_want_ctid &&
+			!TupIsNull(scanslot))
+		{
+			slot_set_ctid_from_fake(scanslot, &node->cdb_fake_ctid);
+		}
+
 		return scanslot;
 	}
 

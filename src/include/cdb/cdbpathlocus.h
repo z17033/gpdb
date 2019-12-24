@@ -18,13 +18,23 @@
 #include "nodes/pg_list.h"      /* List */
 #include "nodes/bitmapset.h"    /* Bitmapset */
 
-struct Plan;                    /* defined in plannodes.h */
+struct Path;                    /* defined in relation.h */
 struct RelOptInfo;              /* defined in relation.h */
 struct PlannerInfo;				/* defined in relation.h */
+struct GpPolicy;				/* defined in gp_policy.h */
+struct PathTarget;
 
 
 /*
  * CdbLocusType
+ *
+ * The difference between SegmentGeneral and Replicated is that a path
+ * with Replicated locus *must* be executed on all of the segments, whereas
+ * a SegmentGeneral *may* be executed on all of the segments, or just one
+ * of them, as is convenient. Replicated is used as the locus for
+ * UPDATEs/DELETEs/INSERTs to replicated tables; it's important that the
+ * plan gets executed on all segments so that all segments are updated.
+ * SegmentGeneral is used when querying replicated tables.
  */
 typedef enum CdbLocusType
 {
@@ -138,7 +148,7 @@ typedef enum CdbLocusType
 typedef struct CdbPathLocus
 {
 	CdbLocusType locustype;
-	List	   *distkey;
+	List	   *distkey;		/* List of DistributionKeys */
 	int			numsegments;
 } CdbPathLocus;
 
@@ -252,6 +262,12 @@ extern bool cdbpathlocus_equal(CdbPathLocus a, CdbPathLocus b);
 
 /************************************************************************/
 
+extern CdbPathLocus cdbpathlocus_for_insert(struct PlannerInfo *root,
+											struct GpPolicy *policy,
+											struct PathTarget *pathtarget);
+
+CdbPathLocus
+cdbpathlocus_from_policy(struct PlannerInfo *root, Index rti, struct GpPolicy *policy);
 CdbPathLocus
 cdbpathlocus_from_baserel(struct PlannerInfo   *root,
                           struct RelOptInfo    *rel);
@@ -259,11 +275,12 @@ CdbPathLocus
 cdbpathlocus_from_exprs(struct PlannerInfo     *root,
                         List                   *hash_on_exprs,
 						List *hash_opclasses,
+						List *hash_sortrefs,
                         int                     numsegments);
 CdbPathLocus
 cdbpathlocus_from_subquery(struct PlannerInfo  *root,
-                           struct Plan         *subqplan,
-                           Index                subqrelid);
+						   struct RelOptInfo   *rel,
+						   struct Path         *subpath);
 
 CdbPathLocus
 cdbpathlocus_join(JoinType jointype, CdbPathLocus a, CdbPathLocus b);
@@ -339,6 +356,9 @@ cdbpathlocus_is_hashed_on_exprs(CdbPathLocus locus, List *exprlist, bool ignore_
  */
 bool
 cdbpathlocus_is_hashed_on_eclasses(CdbPathLocus locus, List *eclasses, bool ignore_constants);
+
+bool
+cdbpathlocus_is_hashed_on_tlist(CdbPathLocus locus, List *tlist, bool ignore_constants);
 
 /*
  * cdbpathlocus_is_hashed_on_relids

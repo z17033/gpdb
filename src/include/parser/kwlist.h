@@ -7,7 +7,7 @@
  * by the PG_KEYWORD macro, which is not defined in this file; it can
  * be defined by the caller for special purposes.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -133,6 +133,7 @@ PG_KEYWORD("delete", DELETE_P, UNRESERVED_KEYWORD)
 PG_KEYWORD("delimiter", DELIMITER, UNRESERVED_KEYWORD)
 PG_KEYWORD("delimiters", DELIMITERS, UNRESERVED_KEYWORD)
 PG_KEYWORD("deny", DENY, UNRESERVED_KEYWORD)
+PG_KEYWORD("depends", DEPENDS, UNRESERVED_KEYWORD)
 PG_KEYWORD("desc", DESC, RESERVED_KEYWORD)
 PG_KEYWORD("dictionary", DICTIONARY, UNRESERVED_KEYWORD)
 PG_KEYWORD("disable", DISABLE_P, UNRESERVED_KEYWORD)
@@ -270,6 +271,7 @@ PG_KEYWORD("median", MEDIAN, COL_NAME_KEYWORD)
 PG_KEYWORD("memory_limit", MEMORY_LIMIT, UNRESERVED_KEYWORD)
 PG_KEYWORD("memory_shared_quota", MEMORY_SHARED_QUOTA, UNRESERVED_KEYWORD)
 PG_KEYWORD("memory_spill_ratio", MEMORY_SPILL_RATIO, UNRESERVED_KEYWORD)
+PG_KEYWORD("method", METHOD, UNRESERVED_KEYWORD)
 PG_KEYWORD("minute", MINUTE_P, UNRESERVED_KEYWORD)
 PG_KEYWORD("minvalue", MINVALUE, UNRESERVED_KEYWORD)
 PG_KEYWORD("missing", MISSING, UNRESERVED_KEYWORD)

@@ -5,7 +5,7 @@
  *
  * Portions Copyright (c) 2006-2008, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,20 +20,19 @@
 #include "miscadmin.h"
 
 #include "access/heapam.h"
-#include "access/htup_details.h"
+#include "access/tsmapi.h"
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
-#include "catalog/pg_constraint.h"
-#include "catalog/pg_exttable.h"
-#include "catalog/pg_operator.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/tlist.h"
+#include "optimizer/var.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
-#include "parser/parse_agg.h"
 #include "parser/parser.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
@@ -47,12 +46,14 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
 #include "utils/rel.h"
 
+#include "catalog/pg_exttable.h"
+#include "catalog/pg_operator.h"
 #include "cdb/cdbvars.h"
 #include "cdb/cdbpartition.h"
-#include "miscadmin.h"
+#include "utils/builtins.h"
+#include "utils/syscache.h"
 
 /* Convenience macro for the most common makeNamespaceItem() case */
 #define makeDefaultNSItem(rte)	makeNamespaceItem(rte, true, true, false, true)
@@ -72,6 +73,8 @@ static RangeTblEntry *transformRangeSubselect(ParseState *pstate,
 						RangeSubselect *r);
 static RangeTblEntry *transformRangeFunction(ParseState *pstate,
 					   RangeFunction *r);
+static TableSampleClause *transformRangeTableSample(ParseState *pstate,
+						  RangeTableSample *rts);
 static Node *transformFromClauseItem(ParseState *pstate, Node *n,
 						RangeTblEntry **top_rte, int *top_rti,
 						List **namespace);
@@ -285,7 +288,7 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 	 * parserOpenTable upgrades the lock to Exclusive mode for distributed
 	 * tables.
 	 */
-	if (pstate->p_is_insert && !pstate->p_is_update)
+	if (pstate->p_is_insert)
 	{
 		setup_parser_errposition_callback(&pcbstate, pstate, relation->location);
 		pstate->p_target_relation = heap_openrv(relation, RowExclusiveLock);
@@ -585,40 +588,6 @@ transformJoinOnClause(ParseState *pstate, JoinExpr *j, List *namespace)
 	return result;
 }
 
-static RangeTblEntry *
-transformTableSampleEntry(ParseState *pstate, RangeTableSample *rv)
-{
-	RangeTblEntry *rte = NULL;
-	CommonTableExpr *cte = NULL;
-	TableSampleClause *tablesample = NULL;
-
-	/* if relation has an unqualified name, it might be a CTE reference */
-	if (!rv->relation->schemaname)
-	{
-		Index		levelsup;
-
-		cte = scanNameSpaceForCTE(pstate, rv->relation->relname, &levelsup);
-	}
-
-	/* We first need to build a range table entry */
-	if (!cte)
-		rte = transformTableEntry(pstate, rv->relation);
-
-	if (!rte ||
-		(rte->relkind != RELKIND_RELATION &&
-		 rte->relkind != RELKIND_MATVIEW))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("TABLESAMPLE clause can only be used on tables and materialized views"),
-				 parser_errposition(pstate, rv->relation->location)));
-
-	tablesample = ParseTableSample(pstate, rv->method, rv->repeatable,
-								   rv->args, rv->relation->location);
-	rte->tablesample = tablesample;
-
-	return rte;
-}
-
 /*
  * transformTableEntry --- transform a RangeVar (simple relation reference)
  */
@@ -758,7 +727,6 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 				coldeflist == NIL)
 			{
 				/* OK, now we need to check the arguments and generate a RTE */
-				RangeVar *rel;
 
 				if (list_length(fc->args) != 1)
 					elog(ERROR, "Invalid %s syntax.", GP_DIST_RANDOM_NAME);
@@ -766,8 +734,8 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 				if (IsA(linitial(fc->args), A_Const))
 				{
 					A_Const *arg_val;
-					char *schemaname;
-					char *tablename;
+					List *qualified_name_list;
+					RangeVar *rel;
 
 					arg_val = linitial(fc->args);
 					if (!IsA(&arg_val->val, String))
@@ -775,22 +743,9 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 						elog(ERROR, "%s: invalid argument type, non-string in value", GP_DIST_RANDOM_NAME);
 					}
 
-					schemaname = strVal(&arg_val->val);
-					tablename = strchr(schemaname, '.');
-					if (tablename)
-					{
-						*tablename = 0;
-						tablename++;
-					}
-					else
-					{
-						/* no schema */
-						tablename = schemaname;
-						schemaname = NULL;
-					}
-
-					/* Got the name of the table, now we need to build the RTE for the table. */
-					rel = makeRangeVar(schemaname, tablename, arg_val->location);
+					/* Build the RTE for the table. */
+					qualified_name_list = stringToQualifiedNameList(strVal(&arg_val->val));
+					rel = makeRangeVarFromNameList(qualified_name_list);
 					rel->location = arg_val->location;
 
 					rte = addRangeTableEntry(pstate, rel, r->alias, false, true);
@@ -989,6 +944,109 @@ transformRangeFunction(ParseState *pstate, RangeFunction *r)
 	return rte;
 }
 
+/*
+ * transformRangeTableSample --- transform a TABLESAMPLE clause
+ *
+ * Caller has already transformed rts->relation, we just have to validate
+ * the remaining fields and create a TableSampleClause node.
+ */
+static TableSampleClause *
+transformRangeTableSample(ParseState *pstate, RangeTableSample *rts)
+{
+	TableSampleClause *tablesample;
+	Oid			handlerOid;
+	Oid			funcargtypes[1];
+	TsmRoutine *tsm;
+	List	   *fargs;
+	ListCell   *larg,
+			   *ltyp;
+
+	/*
+	 * To validate the sample method name, look up the handler function, which
+	 * has the same name, one dummy INTERNAL argument, and a result type of
+	 * tsm_handler.  (Note: tablesample method names are not schema-qualified
+	 * in the SQL standard; but since they are just functions to us, we allow
+	 * schema qualification to resolve any potential ambiguity.)
+	 */
+	funcargtypes[0] = INTERNALOID;
+
+	handlerOid = LookupFuncName(rts->method, 1, funcargtypes, true);
+
+	/* we want error to complain about no-such-method, not no-such-function */
+	if (!OidIsValid(handlerOid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("tablesample method %s does not exist",
+						NameListToString(rts->method)),
+				 parser_errposition(pstate, rts->location)));
+
+	/* check that handler has correct return type */
+	if (get_func_rettype(handlerOid) != TSM_HANDLEROID)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("function %s must return type %s",
+						NameListToString(rts->method), "tsm_handler"),
+				 parser_errposition(pstate, rts->location)));
+
+	/* OK, run the handler to get TsmRoutine, for argument type info */
+	tsm = GetTsmRoutine(handlerOid);
+
+	tablesample = makeNode(TableSampleClause);
+	tablesample->tsmhandler = handlerOid;
+
+	/* check user provided the expected number of arguments */
+	if (list_length(rts->args) != list_length(tsm->parameterTypes))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TABLESAMPLE_ARGUMENT),
+		  errmsg_plural("tablesample method %s requires %d argument, not %d",
+						"tablesample method %s requires %d arguments, not %d",
+						list_length(tsm->parameterTypes),
+						NameListToString(rts->method),
+						list_length(tsm->parameterTypes),
+						list_length(rts->args)),
+				 parser_errposition(pstate, rts->location)));
+
+	/*
+	 * Transform the arguments, typecasting them as needed.  Note we must also
+	 * assign collations now, because assign_query_collations() doesn't
+	 * examine any substructure of RTEs.
+	 */
+	fargs = NIL;
+	forboth(larg, rts->args, ltyp, tsm->parameterTypes)
+	{
+		Node	   *arg = (Node *) lfirst(larg);
+		Oid			argtype = lfirst_oid(ltyp);
+
+		arg = transformExpr(pstate, arg, EXPR_KIND_FROM_FUNCTION);
+		arg = coerce_to_specific_type(pstate, arg, argtype, "TABLESAMPLE");
+		assign_expr_collations(pstate, arg);
+		fargs = lappend(fargs, arg);
+	}
+	tablesample->args = fargs;
+
+	/* Process REPEATABLE (seed) */
+	if (rts->repeatable != NULL)
+	{
+		Node	   *arg;
+
+		if (!tsm->repeatable_across_queries)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				  errmsg("tablesample method %s does not support REPEATABLE",
+						 NameListToString(rts->method)),
+					 parser_errposition(pstate, rts->location)));
+
+		arg = transformExpr(pstate, rts->repeatable, EXPR_KIND_FROM_FUNCTION);
+		arg = coerce_to_specific_type(pstate, arg, FLOAT8OID, "REPEATABLE");
+		assign_expr_collations(pstate, arg);
+		tablesample->repeatable = (Expr *) arg;
+	}
+	else
+		tablesample->repeatable = NULL;
+
+	return tablesample;
+}
+
 
 /*
  * transformFromClauseItem -
@@ -1086,6 +1144,33 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		rtr = makeNode(RangeTblRef);
 		rtr->rtindex = rtindex;
 		result = (Node *) rtr;
+	}
+	else if (IsA(n, RangeTableSample))
+	{
+		/* TABLESAMPLE clause (wrapping some other valid FROM node) */
+		RangeTableSample *rts = (RangeTableSample *) n;
+		Node	   *rel;
+		RangeTblRef *rtr;
+		RangeTblEntry *rte;
+
+		/* Recursively transform the contained relation */
+		rel = transformFromClauseItem(pstate, rts->relation,
+									  top_rte, top_rti, namespace);
+		/* Currently, grammar could only return a RangeVar as contained rel */
+		Assert(IsA(rel, RangeTblRef));
+		rtr = (RangeTblRef *) rel;
+		rte = rt_fetch(rtr->rtindex, pstate->p_rtable);
+		/* We only support this on plain relations and matviews */
+		if (rte->relkind != RELKIND_RELATION &&
+			rte->relkind != RELKIND_MATVIEW)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("TABLESAMPLE clause can only be applied to tables and materialized views"),
+				   parser_errposition(pstate, exprLocation(rts->relation))));
+
+		/* Transform TABLESAMPLE details and attach to the RTE */
+		rte->tablesample = transformRangeTableSample(pstate, rts);
+		return (Node *) rtr;
 	}
 	else if (IsA(n, JoinExpr))
 	{
@@ -1407,26 +1492,6 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 											   true));
 
 		result = (Node *) j;
-	}
-	else if (IsA(n, RangeTableSample))
-	{
-		/* Tablesample reference */
-		RangeTableSample *rv = (RangeTableSample *) n;
-		RangeTblRef *rtr;
-		RangeTblEntry *rte = NULL;
-		int			rtindex;
-
-		rte = transformTableSampleEntry(pstate, rv);
-
-		/* assume new rte is at end */
-		rtindex = list_length(pstate->p_rtable);
-		Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
-		*top_rte = rte;
-		*top_rti = rtindex;
-		*namespace = list_make1(makeDefaultNSItem(rte));
-		rtr = makeNode(RangeTblRef);
-		rtr->rtindex = rtindex;
-		return (Node *) rtr;
 	}
 	else
     {
@@ -1981,7 +2046,7 @@ findTargetlistEntrySQL99(ParseState *pstate, Node *node, List **tlist,
  * Inside a grouping set (ROLLUP, CUBE, or GROUPING SETS), we expect the
  * content to be nested no more than 2 deep: i.e. ROLLUP((a,b),(c,d)) is
  * ok, but ROLLUP((a,(b,c)),d) is flattened to ((a,b,c),d), which we then
- * normalize to ((a,b,c),(d)).
+ * (later) normalize to ((a,b,c),(d)).
  *
  * CUBE or ROLLUP can be nested inside GROUPING SETS (but not the reverse),
  * and we leave that alone if we find it. But if we see GROUPING SETS inside
@@ -2050,9 +2115,16 @@ flatten_grouping_sets(Node *expr, bool toplevel, bool *hasGroupingSets)
 
 				foreach(l2, gset->content)
 				{
-					Node	   *n2 = flatten_grouping_sets(lfirst(l2), false, NULL);
+					Node	   *n1 = lfirst(l2);
+					Node	   *n2 = flatten_grouping_sets(n1, false, NULL);
 
-					result_set = lappend(result_set, n2);
+					if (IsA(n1, GroupingSet) &&
+						((GroupingSet *) n1)->kind == GROUPING_SET_SETS)
+					{
+						result_set = list_concat(result_set, (List *) n2);
+					}
+					else
+						result_set = lappend(result_set, n2);
 				}
 
 				/*
@@ -3267,7 +3339,7 @@ transformOnConflictArbiter(ParseState *pstate,
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("ON CONFLICT DO UPDATE requires inference specification or constraint name"),
-				 errhint("For example, ON CONFLICT (<column>)."),
+				 errhint("For example, ON CONFLICT (column_name)."),
 				 parser_errposition(pstate,
 								  exprLocation((Node *) onConflictClause))));
 
@@ -3278,7 +3350,7 @@ transformOnConflictArbiter(ParseState *pstate,
 	if (IsCatalogRelation(pstate->p_target_relation))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			  errmsg("ON CONFLICT not supported with system catalog tables"),
+		   errmsg("ON CONFLICT is not supported with system catalog tables"),
 				 parser_errposition(pstate,
 								  exprLocation((Node *) onConflictClause))));
 
@@ -3286,7 +3358,7 @@ transformOnConflictArbiter(ParseState *pstate,
 	if (RelationIsUsedAsCatalogTable(pstate->p_target_relation))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("ON CONFLICT not supported on table \"%s\" used as a catalog table",
+				 errmsg("ON CONFLICT is not supported on table \"%s\" used as a catalog table",
 						RelationGetRelationName(pstate->p_target_relation)),
 				 parser_errposition(pstate,
 								  exprLocation((Node *) onConflictClause))));

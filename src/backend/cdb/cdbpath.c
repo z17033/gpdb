@@ -13,21 +13,28 @@
  */
 #include "postgres.h"
 
+#include "access/hash.h"
+#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
+#include "catalog/pg_trigger.h"
+#include "commands/trigger.h"
 #include "nodes/makefuncs.h"	/* makeFuncExpr() */
 #include "nodes/relation.h"		/* PlannerInfo, RelOptInfo */
 #include "optimizer/cost.h"		/* cpu_tuple_cost */
 #include "optimizer/pathnode.h" /* Path, pathnode_walker() */
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
+#include "optimizer/tlist.h"
+#include "parser/parsetree.h"
 
 #include "parser/parse_expr.h"	/* exprType() */
 #include "parser/parse_oper.h"
 
 #include "utils/catcache.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -53,7 +60,9 @@ typedef struct
 static bool try_redistribute(PlannerInfo *root, CdbpathMfjRel *g,
 							 CdbpathMfjRel *o, List *redistribution_clauses);
 
+static SplitUpdatePath *make_splitupdate_path(PlannerInfo *root, Path *subpath, Index rti);
 
+static bool can_elide_explicit_motion(PlannerInfo *root, Index rti, Path *subpath, GpPolicy *policy);
 /*
  * cdbpath_cost_motion
  *    Fills in the cost estimate fields in a MotionPath node.
@@ -122,7 +131,7 @@ cdbpath_create_motion_path(PlannerInfo *root,
 	/* Moving subpath output to a single executor process (qDisp or qExec)? */
 	if (CdbPathLocus_IsOuterQuery(locus))
 	{
-		/* GPDB_96_MERGE_FIXME: this is special */
+		/* Outer -> Outer is a no-op */
 		if (CdbPathLocus_IsOuterQuery(subpath->locus))
 		{
 			return subpath;
@@ -194,9 +203,21 @@ cdbpath_create_motion_path(PlannerInfo *root,
 			pathnode = makeNode(CdbMotionPath);
 			pathnode->path.pathtype = T_Motion;
 			pathnode->path.parent = subpath->parent;
+			/* Motion doesn't project, so use source path's pathtarget */
+			pathnode->path.pathtarget = subpath->pathtarget;
 			pathnode->path.locus = locus;
 			pathnode->path.rows = subpath->rows;
+
+			/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+			 * setting this to 'false' initially, to play it safe, but somehow
+			 * the Paths with motions ended up in gather plans anyway, and tripped
+			 * assertion failures.
+			 */
+			pathnode->path.parallel_aware = false;
+			pathnode->path.parallel_safe = subpath->parallel_safe;
+			pathnode->path.parallel_workers = subpath->parallel_workers;
 			pathnode->path.pathkeys = pathkeys;
+
 			pathnode->subpath = subpath;
 
 			Assert(pathnode->path.locus.numsegments > 0);
@@ -212,7 +233,8 @@ cdbpath_create_motion_path(PlannerInfo *root,
 			return (Path *) pathnode;
 		}
 
-		if (CdbPathLocus_IsSegmentGeneral(subpath->locus))
+		if (CdbPathLocus_IsSegmentGeneral(subpath->locus) ||
+			CdbPathLocus_IsReplicated(subpath->locus))
 		{
 			/*
 			 * Data is only available on segments, to distingush it with
@@ -226,9 +248,21 @@ cdbpath_create_motion_path(PlannerInfo *root,
 			pathnode = makeNode(CdbMotionPath);
 			pathnode->path.pathtype = T_Motion;
 			pathnode->path.parent = subpath->parent;
+			/* Motion doesn't project, so use source path's pathtarget */
+			pathnode->path.pathtarget = subpath->pathtarget;
 			pathnode->path.locus = locus;
 			pathnode->path.rows = subpath->rows;
 			pathnode->path.pathkeys = pathkeys;
+
+			/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+			 * setting this to 'false' initially, to play it safe, but somehow
+			 * the Paths with motions ended up in gather plans anyway, and tripped
+			 * assertion failures.
+			 */
+			pathnode->path.parallel_aware = false;
+			pathnode->path.parallel_safe = subpath->parallel_safe;
+			pathnode->path.parallel_workers = subpath->parallel_workers;
+
 			pathnode->subpath = subpath;
 
 			Assert(pathnode->path.locus.numsegments > 0);
@@ -259,10 +293,6 @@ cdbpath_create_motion_path(PlannerInfo *root,
 		if (require_existing_order &&
 			!pathkeys)
 			return NULL;
-
-		/* replicated-->singleton would give redundant copies of the rows. */
-		if (CdbPathLocus_IsReplicated(subpath->locus))
-			goto invalid_motion_request;
 
 		/*
 		 * Must be partitioned-->singleton. If caller gave pathkeys, they'll
@@ -367,19 +397,21 @@ cdbpath_create_motion_path(PlannerInfo *root,
 		 *
 		 * FIXME: HashedOJ?
 		 */
-		if (CdbPathLocus_IsHashed(locus))
+		if (CdbPathLocus_IsPartitioned(locus))
 		{
 			pathkeys = subpath->pathkeys;
 		}
 		else if (CdbPathLocus_IsReplicated(locus))
 		{
-			/*
-			 * Assume that this case only can be generated in
-			 * UPDATE/DELETE statement
-			 */
-			if (root->upd_del_replicated_table == 0)
-				goto invalid_motion_request;
-
+			if (CdbPathLocus_NumSegments(locus) <= CdbPathLocus_NumSegments(subpath->locus))
+			{
+				subpath->locus.numsegments = numsegments;
+				return subpath;
+			}
+			else
+			{
+				pathkeys = subpath->pathkeys;
+			}
 		}
 		else
 			goto invalid_motion_request;
@@ -401,10 +433,23 @@ cdbpath_create_motion_path(PlannerInfo *root,
 	pathnode = makeNode(CdbMotionPath);
 	pathnode->path.pathtype = T_Motion;
 	pathnode->path.parent = subpath->parent;
+	/* Motion doesn't project, so use source path's pathtarget */
+	pathnode->path.pathtarget = subpath->pathtarget;
 	pathnode->path.locus = locus;
 	pathnode->path.rows = subpath->rows;
 	pathnode->path.pathkeys = pathkeys;
+
+	/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+	 * setting this to 'false' initially, to play it safe, but somehow
+	 * the Paths with motions ended up in gather plans anyway, and tripped
+	 * assertion failures.
+	 */
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+
 	pathnode->subpath = subpath;
+	pathnode->is_explicit_motion = false;
 
 	/* Cost of motion */
 	cdbpath_cost_motion(root, pathnode);
@@ -431,6 +476,128 @@ invalid_motion_request:
 	elog(ERROR, "could not build Motion path");
 	return NULL;
 }								/* cdbpath_create_motion_path */
+
+Path *
+cdbpath_create_explicit_motion_path(PlannerInfo *root,
+									Path *subpath,
+									CdbPathLocus locus)
+{
+	CdbMotionPath *pathnode;
+
+	/* Create CdbMotionPath node. */
+	pathnode = makeNode(CdbMotionPath);
+	pathnode->path.pathtype = T_Motion;
+	pathnode->path.parent = subpath->parent;
+	/* Motion doesn't project, so use source path's pathtarget */
+	pathnode->path.pathtarget = subpath->pathtarget;
+	pathnode->path.locus = locus;
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.pathkeys = NIL;
+
+	/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+	 * setting this to 'false' initially, to play it safe, but somehow
+	 * the Paths with motions ended up in gather plans anyway, and tripped
+	 * assertion failures.
+	 */
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+
+	pathnode->subpath = subpath;
+	pathnode->is_explicit_motion = true;
+
+	/* Cost of motion */
+	cdbpath_cost_motion(root, pathnode);
+
+	/* Tell operators above us that slack may be needed for deadlock safety. */
+	pathnode->path.motionHazard = true;
+	pathnode->path.rescannable = false;
+
+	return (Path *) pathnode;
+}
+
+Path *
+cdbpath_create_broadcast_motion_path(PlannerInfo *root,
+									 Path *subpath,
+									 int numsegments)
+{
+	CdbMotionPath *pathnode;
+
+	/* Create CdbMotionPath node. */
+	pathnode = makeNode(CdbMotionPath);
+	pathnode->path.pathtype = T_Motion;
+	pathnode->path.parent = subpath->parent;
+	/* Motion doesn't project, so use source path's pathtarget */
+	pathnode->path.pathtarget = subpath->pathtarget;
+	CdbPathLocus_MakeReplicated(&pathnode->path.locus, numsegments);
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.pathkeys = NIL;
+
+	/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+	 * setting this to 'false' initially, to play it safe, but somehow
+	 * the Paths with motions ended up in gather plans anyway, and tripped
+	 * assertion failures.
+	 */
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+
+	pathnode->subpath = subpath;
+	pathnode->is_explicit_motion = false;
+
+	/* Cost of motion */
+	cdbpath_cost_motion(root, pathnode);
+
+	/* Tell operators above us that slack may be needed for deadlock safety. */
+	pathnode->path.motionHazard = true;
+	pathnode->path.rescannable = false;
+
+	return (Path *) pathnode;
+}
+
+/*
+ */
+static CdbMotionPath *
+make_motion_path(PlannerInfo *root, Path *subpath,
+				 CdbPathLocus locus,
+				 bool is_explicit_motion,
+				 GpPolicy *policy)
+{
+	CdbMotionPath *pathnode;
+
+	/* Create CdbMotionPath node. */
+	pathnode = makeNode(CdbMotionPath);
+	pathnode->path.pathtype = T_Motion;
+	pathnode->path.parent = subpath->parent;
+	/* Motion doesn't project, so use source path's pathtarget */
+	pathnode->path.pathtarget = subpath->pathtarget;
+	pathnode->path.locus = locus;
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.pathkeys = NIL;
+
+	/* GPDB_96_MERGE_FIXME: When is a Motion path parallel-safe? I tried
+	 * setting this to 'false' initially, to play it safe, but somehow
+	 * the Paths with motions ended up in gather plans anyway, and tripped
+	 * assertion failures.
+	 */
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+
+	pathnode->subpath = subpath;
+
+	pathnode->is_explicit_motion = is_explicit_motion;
+	pathnode->policy = policy;
+
+	/* Cost of motion */
+	cdbpath_cost_motion(root, pathnode);
+
+	/* Tell operators above us that slack may be needed for deadlock safety. */
+	pathnode->path.motionHazard = true;
+	pathnode->path.rescannable = false;
+
+	return pathnode;
+}
 
 /*
  * cdbpath_match_preds_to_partkey_tail
@@ -474,10 +641,13 @@ makeDistributionKeyForEC(EquivalenceClass *eclass, Oid opfamily)
  * cdbpath_eclass_constant_is_hashable
  *
  * Iterates through a list of equivalence class members and determines if
- * expression in pseudoconstant are hashable.
+ * expression in pseudoconstant is hashable under the given hash opfamily.
+ *
+ * If there are multiple constants in the equivalence class, it is sufficient
+ * that one of them is usable.
  */
 static bool
-cdbpath_eclass_constant_is_hashable(EquivalenceClass *ec)
+cdbpath_eclass_constant_is_hashable(EquivalenceClass *ec, Oid hashOpFamily)
 {
 	ListCell   *j;
 
@@ -485,12 +655,15 @@ cdbpath_eclass_constant_is_hashable(EquivalenceClass *ec)
 	{
 		EquivalenceMember *em = (EquivalenceMember *) lfirst(j);
 
-		/* Fail on non-hashable expression types */
-		if (em->em_is_const && !cdb_default_distribution_opfamily_for_type(exprType((Node *) em->em_expr)))
-			return false;
+		if (!em->em_is_const)
+			continue;
+
+		if (get_opfamily_member(hashOpFamily, em->em_datatype, em->em_datatype,
+								HTEqualStrategyNumber))
+			return true;
 	}
 
-	return true;
+	return false;
 }
 
 static bool
@@ -524,7 +697,7 @@ cdbpath_match_preds_to_distkey_tail(CdbpathMatchPredsContext *ctx,
 		EquivalenceClass *ec = (EquivalenceClass *) lfirst(cell);
 
 		if (CdbEquivClassIsConstant(ec) &&
-			cdbpath_eclass_constant_is_hashable(ec))
+			cdbpath_eclass_constant_is_hashable(ec, distkey->dk_opfamily))
 		{
 			codistkey = distkey;
 			break;
@@ -1026,8 +1199,8 @@ cdbpath_motion_for_join(PlannerInfo *root,
 	}
 
 	/* Get rel sizes. */
-	outer.bytes = outer.path->rows * outer.path->parent->width;
-	inner.bytes = inner.path->rows * inner.path->parent->width;
+	outer.bytes = outer.path->rows * outer.path->pathtarget->width;
+	inner.bytes = inner.path->rows * inner.path->pathtarget->width;
 
 	if (CdbPathLocus_IsOuterQuery(outer.locus) ||
 		CdbPathLocus_IsOuterQuery(inner.locus))
@@ -1762,7 +1935,8 @@ cdbpath_dedup_fixup_unique(UniquePath *uniquePath, CdbpathDedupFixupContext *ctx
 
 				cdistkey = cdb_make_distkey_for_expr(ctx->root,
 													 (Node *) var,
-													 opfamily);
+													 opfamily,
+													 0);
 				distkeys = lappend(distkeys, cdistkey);
 			}
 		}
@@ -1823,8 +1997,8 @@ cdbpath_dedup_fixup_baserel(Path *path, CdbpathDedupFixupContext *ctx)
 
 	Assert(!ctx->rowid_vars);
 
-	/* Find or make a Var node referencing our 'ctid' system attribute. */
-	var = find_indexkey_var(ctx->root, rel, SelfItemPointerAttributeNumber);
+	/* Make a Var node referencing our 'ctid' system attribute. */
+	var = makeVar(rel->relid, SelfItemPointerAttributeNumber, TIDOID, -1, InvalidOid, 0);
 	rowid_vars = lappend(rowid_vars, var);
 
 	/*
@@ -1839,7 +2013,7 @@ cdbpath_dedup_fixup_baserel(Path *path, CdbpathDedupFixupContext *ctx)
 		if (!CdbPathLocus_IsBottleneck(path->locus) &&
 			!CdbPathLocus_IsGeneral(path->locus))
 		{
-			var = find_indexkey_var(ctx->root, rel, GpSegmentIdAttributeNumber);
+			var = makeVar(rel->relid, GpSegmentIdAttributeNumber, INT4OID, -1, InvalidOid, 0);
 			rowid_vars = lappend(rowid_vars, var);
 		}
 	}
@@ -1974,7 +2148,7 @@ cdbpath_dedup_fixup_append(AppendPath *appendPath, CdbpathDedupFixupContext *ctx
 
 	/* Add placeholder columns to the appendrel's targetlist. */
 	cdbpath_dedup_fixup_baserel((Path *) appendPath, ctx);
-	ncol = list_length(appendPath->path.parent->reltargetlist);
+	ncol = list_length(appendPath->path.pathtarget->exprs);
 
 	appendrel_rowid_vars = ctx->rowid_vars;
 	ctx->rowid_vars = NIL;
@@ -2003,7 +2177,7 @@ cdbpath_dedup_fixup_append(AppendPath *appendPath, CdbpathDedupFixupContext *ctx
 		 * CDB TODO: Add dummy columns to other subpaths to keep their
 		 * targetlists in sync.
 		 */
-		if (list_length(subpath->parent->reltargetlist) != ncol)
+		if (list_length(subpath->pathtarget->exprs) != ncol)
 			ereport(ERROR, (errcode(ERRCODE_GP_FEATURE_NOT_YET),
 							errmsg("The query is not yet supported in "
 								   "this version of " PACKAGE_NAME "."),
@@ -2034,7 +2208,7 @@ cdbpath_dedup_fixup_walker(Path *path, void *context)
 	Assert(!ctx->rowid_vars);
 
 	/* Watch for a UniquePath node calling for removal of dups by row id. */
-	if (path->pathtype == T_Unique)
+	if (IsA(path, UniquePath))
 		return cdbpath_dedup_fixup_unique((UniquePath *) path, ctx);
 
 	/* Leave node unchanged unless a downstream Unique op needs row ids. */
@@ -2248,5 +2422,389 @@ try_redistribute(PlannerInfo *root, CdbpathMfjRel *g, CdbpathMfjRel *o,
 	 * fail to redistribute, return false
 	 * to let caller know.
 	 */
+	return false;
+}
+
+
+static void
+failIfUpdateTriggers(Relation relation)
+{
+	bool	found = false;
+
+	if (relation->rd_rel->relhastriggers && NULL == relation->trigdesc)
+		RelationBuildTriggers(relation);
+
+	if (!relation->trigdesc)
+		return;
+
+	if (relation->rd_rel->relhastriggers)
+	{
+		for (int i = 0; i < relation->trigdesc->numtriggers && !found; i++)
+		{
+			Trigger trigger = relation->trigdesc->triggers[i];
+			found = trigger_enabled(trigger.tgoid) &&
+					(get_trigger_type(trigger.tgoid) & TRIGGER_TYPE_UPDATE) == TRIGGER_TYPE_UPDATE;
+			if (found)
+				break;
+		}
+	}
+
+	/* GPDB_96_MERGE_FIXME: Why is this not allowed? */
+	if (found || child_triggers(relation->rd_id, TRIGGER_TYPE_UPDATE))
+		ereport(ERROR,
+				(errcode(ERRCODE_GP_FEATURE_NOT_YET),
+				 errmsg("UPDATE on distributed key column not allowed on relation with update triggers")));
+}
+
+/*
+ * Add a suitable Motion Path so that the input tuples from 'subpath' are
+ * distributed correctly for insertion into target table.
+ */
+Path *
+create_motion_path_for_ctas(PlannerInfo *root, GpPolicy *policy, Path *subpath)
+{
+	GpPolicyType	policyType = policy->ptype;
+
+	if (policyType == POLICYTYPE_PARTITIONED && policy->nattrs == 0)
+	{
+		/*
+		 * If the target table is DISTRIBUTED RANDOMLY, and the input data
+		 * is already partitioned, we could let the insertions happen where
+		 * they are. But to ensure more random distribution, redistribute.
+		 * This is different from create_motion_path_for_insert().
+		 */
+		CdbPathLocus targetLocus;
+
+		CdbPathLocus_MakeStrewn(&targetLocus, policy->numsegments);
+		return cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+	}
+	else
+		return create_motion_path_for_insert(root, policy, subpath);
+}
+
+/*
+ * Add a suitable Motion Path so that the input tuples from 'subpath' are
+ * distributed correctly for insertion into target table.
+ */
+Path *
+create_motion_path_for_insert(PlannerInfo *root, GpPolicy *policy,
+							  Path *subpath)
+{
+	GpPolicyType	policyType = policy->ptype;
+	CdbPathLocus	targetLocus;
+
+	if (policyType == POLICYTYPE_PARTITIONED)
+	{
+		/*
+		 * A query to reach here: INSERT INTO t1 VALUES(1).
+		 * There is no need to add a motion from General, we could
+		 * simply put General on the same segments with target table.
+		 */
+		/* FIXME: also do this for other targetPolicyType? */
+		/* FIXME: also do this for all the subplans */
+		if (CdbPathLocus_IsGeneral(subpath->locus))
+		{
+			subpath->locus.numsegments = policy->numsegments;
+		}
+
+		targetLocus = cdbpathlocus_for_insert(root, policy, subpath->pathtarget);
+
+		if (policy->nattrs == 0 && CdbPathLocus_IsPartitioned(subpath->locus))
+		{
+			/*
+			 * If the target table is DISTRIBUTED RANDOMLY, we can insert the
+			 * rows anywhere. So if the input path is already partitioned, let
+			 * the insertions happen where they are.
+			 *
+			 * If you `explain` the query insert into tab_random select * from tab_partition
+			 * there is not Motion node in plan. However, it is not means that the query only
+			 * execute in entry db. It is dispatched to QE and do everything well as we expect.
+			 *
+			 * But, we need to grant a Motion node if target locus' segnumber is different with
+			 * subpath.
+			 */
+			if(targetLocus.numsegments != subpath->locus.numsegments)
+			{
+				CdbPathLocus_MakeStrewn(&targetLocus, policy->numsegments);
+				subpath = cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+			}
+		}
+		else if (CdbPathLocus_IsNull(targetLocus))
+		{
+			/* could not create DistributionKeys to represent the distribution keys. */
+			CdbPathLocus_MakeStrewn(&targetLocus, policy->numsegments);
+
+			subpath = (Path *) make_motion_path(root, subpath, targetLocus, false, policy);
+		}
+		else
+		{
+			subpath = cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+		}
+	}
+	else if (policyType == POLICYTYPE_ENTRY)
+	{
+		/*
+		 * Query result needs to be brought back to the QD.
+		 */
+		CdbPathLocus_MakeEntry(&targetLocus);
+		subpath = cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+	}
+	else if (policyType == POLICYTYPE_REPLICATED)
+	{
+		/* try to optimize insert with no motion introduced into */
+		if (optimizer_replicated_table_insert &&
+			!contain_volatile_functions((Node *)subpath->pathtarget->exprs))
+		{
+			/*
+			 * CdbLocusType_SegmentGeneral is only used by replicated table
+			 * right now, so if both input and target are replicated table,
+			 * no need to add a motion.
+			 *
+			 * Also, to expand a replicated table to new segments, gpexpand
+			 * force a data reorganization by a query like:
+			 * CREATE TABLE tmp_tab AS SELECT * FROM source_table DISTRIBUTED REPLICATED
+			 * Obviously, tmp_tab in new segments can't get data if we don't
+			 * add a broadcast here.
+			 */
+			if(CdbPathLocus_IsSegmentGeneral(subpath->locus) &&
+					subpath->locus.numsegments >= policy->numsegments)
+			{
+				/*
+				 * A query to reach here:
+				 *     INSERT INTO d1 SELECT * FROM d1;
+				 * There is no need to add a motion from General, we
+				 * could simply put General on the same segments with
+				 * target table.
+				 *
+				 * Otherwise a broadcast motion is needed otherwise d2 will
+				 * only have data on segment 0.
+				 */
+				subpath->locus.numsegments = policy->numsegments;
+				return subpath;
+			}
+
+			/* plan's data are available on all segment, no motion needed */
+			if(CdbPathLocus_IsGeneral(subpath->locus))
+			{
+				/*
+				 * A query to reach here: INSERT INTO d1 VALUES(1).
+				 * There is no need to add a motion from General, we
+				 * could simply put General on the same segments with
+				 * target table.
+				 */
+				subpath->locus.numsegments = Min(subpath->locus.numsegments,policy->numsegments) ;
+				return subpath;
+			}
+
+		}
+		subpath = cdbpath_create_broadcast_motion_path(root, subpath, policy->numsegments);
+	}
+	else
+		elog(ERROR, "unrecognized policy type %u", policyType);
+	return subpath;
+}
+
+/*
+ * Add a suitable Motion Path for delete and update. If the UPDATE
+ * modifies the distribution key columns, use create_split_update_path()
+ * instead.
+ */
+Path *
+create_motion_path_for_upddel(PlannerInfo *root, Index rti, GpPolicy *policy,
+							  Path *subpath)
+{
+	GpPolicyType	policyType = policy->ptype;
+	CdbPathLocus	targetLocus;
+
+	if (policyType == POLICYTYPE_PARTITIONED)
+	{
+		if (can_elide_explicit_motion(root, rti, subpath, policy))
+			return subpath;
+		else
+		{
+			/* GPDB_96_MERGE_FIXME: avoid creating the Explicit Motion in
+			 * simple cases, where all the input data is already on the
+			 * same segment.
+			 *
+			 * Is "strewn" correct here? Can we do better?
+			 */
+			CdbPathLocus_MakeStrewn(&targetLocus, policy->numsegments);
+			subpath = cdbpath_create_explicit_motion_path(root,
+														  subpath,
+														  targetLocus);
+		}
+	}
+	else if (policyType == POLICYTYPE_ENTRY)
+	{
+		/* Master-only table */
+		CdbPathLocus_MakeEntry(&targetLocus);
+		subpath = cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+	}
+	else if (policyType == POLICYTYPE_REPLICATED)
+	{
+	}
+	else
+		elog(ERROR, "unrecognized policy type %u", policyType);
+
+	return subpath;
+}
+
+/*
+ * In Postgres planner, we add a SplitUpdate node at top so that updating on
+ * distribution columns could be handled. The SplitUpdate will split each
+ * update into delete + insert.
+ *
+ * There are several important points should be highlighted:
+ *
+ * First, in order to split each update operation into two operations,
+ * delete + insert, we need several junk columns in the subplan's targetlist,
+ * in addition to the row's new values:
+ *
+ * ctid            the tuple id used for deletion
+ *
+ * gp_segment_id   the segment that the row originates from. Usually the
+ *                 current segment where the SplitUpdate runs, but not
+ *                 necessarily, if there are multiple joins involved and the
+ *                 planner decided redistribute the data.
+ *
+ * oid             if result relation has oids, the old OID, so that it can be
+ *                 preserved in the new row.
+ *
+ * We will add one more column to the output, the "action". It's an integer
+ * that indicates for each row, whether it represents the DELETE or the INSERT
+ * of that row. It is generated by the Split Update node.
+ *
+ * Second, current GPDB executor don't support statement-level update triggers
+ * and will skip row-level update triggers because a split-update is actually
+ * consist of a delete and insert. So, if the result relation has update
+ * triggers, we should reject and error out because it's not functional.
+ *
+ * GPDB_96_MERGE_FIXME: the below comment is obsolete. Nowadays, SplitUpdate
+ * computes the new row's hash, and the corresponding. target segment. The
+ * old segment comes from the gp_segment_id junk column. But ORCA still
+ * does it the old way!
+ *
+ * Third, to support deletion, and hash delete operation to correct segment,
+ * we need to get attributes of OLD tuple. The old attributes must therefore
+ * be present in the subplan's target list. That is handled earlier in the
+ * planner, in expand_targetlist().
+ *
+ * For example, a typical plan would be as following for statement:
+ * update foo set id = l.v + 1 from dep l where foo.v = l.id:
+ *
+ * |-- join ( targetlist: [ l.v + 1, foo.v, foo.id, foo.ctid, foo.gp_segment_id ] )
+ *       |
+ *       |-- motion ( targetlist: [l.id, l.v] )
+ *       |    |
+ *       |    |-- seqscan on dep ....
+ *       |
+ *       |-- hash (targetlist [ v, foo.ctid, foo.gp_segment_id ] )
+ *            |
+ *            |-- seqscan on foo (targetlist: [ v, foo.id, foo.ctid, foo.gp_segment_id ] )
+ *
+ * From the plan above, the target foo.id is assigned as l.v + 1, and expand_targetlist()
+ * ensured that the old value of id, is also available, even though it would not otherwise
+ * be needed.
+ *
+ * 'rti' is the UPDATE target relation.
+ */
+Path *
+create_split_update_path(PlannerInfo *root, Index rti, GpPolicy *policy, Path *subpath)
+{
+	GpPolicyType	policyType = policy->ptype;
+	CdbPathLocus	targetLocus;
+
+	if (policyType == POLICYTYPE_PARTITIONED)
+	{
+		/*
+		 * If any of the distribution key columns are being changed,
+		 * the UPDATE might move tuples from one segment to another.
+		 * Create a Split Update node to deal with that.
+		 *
+		 * If the input is a dummy plan that cannot return any rows,
+		 * e.g. because the input was eliminated by constraint
+		 * exclusion, we can skip it.
+		 */
+		targetLocus = cdbpathlocus_for_insert(root, policy, subpath->pathtarget);
+
+		subpath = (Path *) make_splitupdate_path(root, subpath, rti);
+		subpath = cdbpath_create_explicit_motion_path(root,
+													  subpath,
+													  targetLocus);
+	}
+	else if (policyType == POLICYTYPE_ENTRY)
+	{
+		/* Master-only table */
+		CdbPathLocus_MakeEntry(&targetLocus);
+		subpath = cdbpath_create_motion_path(root, subpath, NIL, false, targetLocus);
+	}
+	else if (policyType == POLICYTYPE_REPLICATED)
+	{
+	}
+	else
+		elog(ERROR, "unrecognized policy type %u", policyType);
+	return subpath;
+}
+
+
+static SplitUpdatePath *
+make_splitupdate_path(PlannerInfo *root, Path *subpath, Index rti)
+{
+	RangeTblEntry  *rte;
+	PathTarget		*splitUpdatePathTarget;
+	SplitUpdatePath	*splitupdatepath;
+	DMLActionExpr	*actionExpr;
+	Relation		resultRelation;
+
+	/* Suppose we already hold locks before caller */
+	rte = planner_rt_fetch(rti, root);
+	resultRelation = relation_open(rte->relid, NoLock);
+
+	failIfUpdateTriggers(resultRelation);
+
+	relation_close(resultRelation, NoLock);
+
+	/* Add action column at the end of targetlist */
+	actionExpr = makeNode(DMLActionExpr);
+	splitUpdatePathTarget = copy_pathtarget(subpath->pathtarget);
+	add_column_to_pathtarget(splitUpdatePathTarget, (Expr *) actionExpr, 0);
+
+	/* populate information generated above into splitupdate node */
+	splitupdatepath = makeNode(SplitUpdatePath);
+	splitupdatepath->path.pathtype = T_SplitUpdate;
+	splitupdatepath->path.parent = subpath->parent;
+	splitupdatepath->path.pathtarget = splitUpdatePathTarget;
+	splitupdatepath->path.param_info = NULL;
+	splitupdatepath->path.parallel_aware = false;
+	splitupdatepath->path.parallel_safe = subpath->parallel_safe;
+	splitupdatepath->path.parallel_workers = subpath->parallel_workers;
+	splitupdatepath->path.rows = 2 * subpath->rows;
+	splitupdatepath->path.startup_cost = subpath->startup_cost;
+	splitupdatepath->path.total_cost = subpath->total_cost;
+	splitupdatepath->path.pathkeys = subpath->pathkeys;
+	splitupdatepath->path.locus = subpath->locus;
+	splitupdatepath->subpath = subpath;
+	splitupdatepath->resultRelation = rti;
+
+	return splitupdatepath;
+}
+
+static bool
+can_elide_explicit_motion(PlannerInfo *root, Index rti, Path *subpath,
+						  GpPolicy *policy)
+{
+	/*
+	 * If there are no Motions between scan of the target relation and here,
+	 * no motion is required.
+	 */
+	if (bms_is_member(rti, subpath->sameslice_relids))
+		return true;
+
+	if (!CdbPathLocus_IsStrewn(subpath->locus))
+	{
+		CdbPathLocus    resultrelation_locus = cdbpathlocus_from_policy(root, rti, policy);
+		return cdbpathlocus_equal(subpath->locus, resultrelation_locus);
+	}
+
 	return false;
 }

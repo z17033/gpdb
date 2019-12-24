@@ -4,7 +4,7 @@
  *	main source file
  *
  *	Portions Copyright (c) 2016-Present, Pivotal Software Inc
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.c
  */
 
@@ -39,18 +39,19 @@
 
 #include "pg_upgrade.h"
 #include "common/restricted_token.h"
+#include "fe_utils/string_utils.h"
 
 #ifdef HAVE_LANGINFO_H
 #include <langinfo.h>
 #endif
+
+#include "greenplum/pg_upgrade_greenplum.h"
 
 static void prepare_new_cluster(void);
 static void prepare_new_databases(void);
 static void create_new_objects(void);
 static void copy_clog_xlog_xid(void);
 static void set_frozenxids(bool minmxid_only);
-static void freeze_master_data(void);
-static void reset_system_identifier(void);
 static void setup(char *argv0, bool *live_check);
 static void cleanup(void);
 
@@ -149,7 +150,7 @@ main(int argc, char **argv)
 	/* -- NEW -- */
 	start_postmaster(&new_cluster, true);
 
-	if (user_opts.segment_mode == DISPATCHER)
+	if (is_greenplum_dispatcher_mode())
 	{
 		prepare_new_databases();
 
@@ -166,7 +167,7 @@ main(int argc, char **argv)
 	 */
 	restore_aosegment_tables();
 
-	if (user_opts.segment_mode == DISPATCHER)
+	if (is_greenplum_dispatcher_mode())
 	{
 		/* freeze master data *right before* stopping */
 		freeze_master_data();
@@ -200,7 +201,7 @@ main(int argc, char **argv)
 	check_ok();
 
 	/* For non-master segments, uniquify the system identifier. */
-	if (user_opts.segment_mode != DISPATCHER)
+	if (!is_greenplum_dispatcher_mode())
 		reset_system_identifier();
 
 	prep_status("Sync data directory to disk");
@@ -410,11 +411,12 @@ prepare_new_cluster(void)
 	 * AO tables can't be analyzed because their aoseg tuple counts don't match
 	 * those on disk. We therefore skip this step for segments.
 	 */
-	if (user_opts.segment_mode == DISPATCHER)
+	if (is_greenplum_dispatcher_mode())
 	{
 		prep_status("Analyzing all rows in the new cluster");
 		exec_prog(UTILITY_LOG_FILE, NULL, true,
-				  "PGOPTIONS='-c gp_session_role=utility' \"%s/vacuumdb\" %s --all --analyze %s",
+				  PG_OPTIONS_UTILITY_MODE
+				  "\"%s/vacuumdb\" %s --all --analyze %s",
 				  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 				  log_opts.verbose ? "--verbose" : "");
 		check_ok();
@@ -428,13 +430,11 @@ prepare_new_cluster(void)
 	 */
 	prep_status("Freezing all rows on the new cluster");
 	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "PGOPTIONS='-c gp_session_role=utility' "
+			  PG_OPTIONS_UTILITY_MODE
 			  "\"%s/vacuumdb\" %s --all --freeze %s",
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  log_opts.verbose ? "--verbose" : "");
 	check_ok();
-
-	get_pg_database_relfilenode(&new_cluster);
 }
 
 
@@ -458,7 +458,7 @@ prepare_new_databases(void)
 	 * the template0 template.
 	 */
 	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "PGOPTIONS='-c gp_session_role=utility' "
+			  PG_OPTIONS_UTILITY_MODE
 			  "\"%s/psql\" " EXEC_PSQL_ARGS " %s -f \"%s\"",
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  GLOBALS_DUMP_FILE);
@@ -501,7 +501,7 @@ create_new_objects(void)
 		 */
 		parallel_exec_prog(log_file_name,
 						   NULL,
-		 "PGOPTIONS='-c gp_session_role=utility' "
+		 PG_OPTIONS_UTILITY_MODE
 		 "\"%s/pg_restore\" %s --exit-on-error --binary-upgrade --verbose --dbname %s \"%s\"",
 						   new_cluster.bindir,
 						   cluster_conn_opts(&new_cluster),
@@ -519,8 +519,8 @@ create_new_objects(void)
 	check_ok();
 
 	/*
-	 * We don't have minmxids for databases or relations in pre-9.3
-	 * clusters, so set those after we have restored the schema.
+	 * We don't have minmxids for databases or relations in pre-9.3 clusters,
+	 * so set those after we have restored the schema.
 	 */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) < 903)
 		set_frozenxids(true);
@@ -528,142 +528,9 @@ create_new_objects(void)
 	/* regenerate now that we have objects in the databases */
 	get_db_and_rel_infos(&new_cluster);
 
-	/*
-	 * If we're upgrading from GPDB4, mark all indexes as invalid.
-	 * The page format is incompatible, and while convert heap
-	 * and AO tables automatically, we don't have similar code for
-	 * indexes. Also, the heap conversion relocates tuples, so
-	 * any indexes on heaps would need to be rebuilt for that
-	 * reason, anyway.
-	 */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) == 802)
-		new_gpdb5_0_invalidate_indexes();
-	else
-	{
-		/* TODO: Bitmap indexes are not supported, so mark them as invalid. */
-		new_gpdb_invalidate_bitmap_indexes();
-	}
+	after_create_new_objects_greenplum();
 }
 
-/*
- * Greenplum upgrade involves copying the MASTER_DATA_DIRECTORY to
- * each primary segment. We need to freeze the master data *after* the master
- * schema has been restored to allow the data to be visible on the segments.
- * All databases need to be frozen including those where datallowconn is false.
- *
- * Note: No further updates should occur after freezing the master data
- * directory.
- */
-static void
-freeze_master_data(void)
-{
-	PGconn 			*conn;
-	PGconn			*conn_template1;
-	PGresult		*dbres;
-	PGresult		*txid_res;
-	PGresult		*dbage_res;
-	int				dbnum;
-	int				ntups;
-	int				i_datallowconn;
-	int				i_datname;
-	TransactionId	txid_before;
-	TransactionId	txid_after;
-	int32 			txns_from_freeze;
-
-	prep_status("Freezing all rows in new master after pg_restore");
-
-	/* Temporarily allow connections to all databases for vacuum freeze */
-	conn_template1 = connectToServer(&new_cluster, "template1");
-
-	PQclear(executeQueryOrDie(conn_template1, "set allow_system_table_mods=true"));
-
-	dbres = executeQueryOrDie(conn_template1,
-							  "SELECT datname, datallowconn "
-							  "FROM	pg_catalog.pg_database");
-
-	i_datname = PQfnumber(dbres, "datname");
-	i_datallowconn = PQfnumber(dbres, "datallowconn");
-
-	ntups = PQntuples(dbres);
-	for (dbnum = 0; dbnum < ntups; dbnum++)
-	{
-		char *datallowconn = PQgetvalue(dbres, dbnum, i_datallowconn);
-		char *datname = PQgetvalue(dbres, dbnum, i_datname);
-		char *escaped_datname = pg_malloc(strlen(datname) * 2 + 1);
-		PQescapeStringConn(conn_template1, escaped_datname, datname, strlen(datname), NULL);
-
-		/* For vacuum freeze, temporarily set datallowconn to true. */
-		if (strcmp(datallowconn, "f") == 0)
-			PQclear(executeQueryOrDie(conn_template1,
-									  "UPDATE pg_catalog.pg_database "
-									  "SET datallowconn = true "
-									  "WHERE datname = '%s'", escaped_datname));
-
-		conn = connectToServer(&new_cluster, datname);
-
-		/* Obtain txid_current before vacuum freeze. */
-		txid_res = executeQueryOrDie(conn, "SELECT txid_current()");
-		txid_before = str2uint(PQgetvalue(txid_res, 0, PQfnumber(txid_res, "txid_current")));
-		PQclear(txid_res);
-
-		PQclear(executeQueryOrDie(conn, "VACUUM FREEZE"));
-
-		/*
-		 * Obtain txid_current and age after vacuum freeze.
-		 *
-		 * Note: It is important that this occurs before any other transactions
-		 * are executed so verification succeeds.
-		 */
-		dbage_res = executeQueryOrDie(conn,
-									  "SELECT txid_current(), age(datfrozenxid) "
-									  "FROM pg_catalog.pg_database "
-									  "WHERE datname = '%s'", escaped_datname);
-		txid_after = str2uint(PQgetvalue(dbage_res, 0, PQfnumber(dbage_res, "txid_current")));
-		uint datfrozenxid_age = str2uint(PQgetvalue(dbage_res, 0, PQfnumber(dbage_res, "age")));
-		PQclear(dbage_res);
-
-		/*
-		 * Verify that the database was frozen by checking that the database age
-		 * is less than the number of transactions taken by "VACUUM FREEZE".
-		 * This implies that all transaction ids that are older than the
-		 * "VACUUM FREEZE" transaction are frozen, and that the oldest
-		 * transaction in the database is newer than the "VACUUM FREEZE"
-		 * transaction.
-		 */
-		txns_from_freeze = txid_after - txid_before;
-		if (txns_from_freeze < 0)
-		{
-			/* Needed if a wrap around occurs between txid after and before. */
-			txns_from_freeze = INT32_MAX - Abs(txns_from_freeze);
-		}
-
-		/* Reset datallowconn flag before possibly raising an error. */
-		if (strcmp(datallowconn, "f") == 0)
-			PQclear(executeQueryOrDie(conn_template1,
-									  "UPDATE pg_catalog.pg_database "
-									  "SET datallowconn = false "
-									  "WHERE datname = '%s'", escaped_datname));
-
-		pg_free(escaped_datname);
-		PQfinish(conn);
-
-		if (datfrozenxid_age > txns_from_freeze)
-		{
-			PQfinish(conn_template1);
-			pg_fatal("Error database '%s' was not properly frozen. Database age of %d is older than %d.\n",
-					 datname, datfrozenxid_age, txns_from_freeze);
-		}
-	}
-
-	/* Freeze the tuples updated from resetting datallowconn flag */
-	PQclear(executeQueryOrDie(conn_template1, "VACUUM FREEZE pg_catalog.pg_database"));
-
-	PQclear(dbres);
-
-	PQfinish(conn_template1);
-
-	check_ok();
-}
 
 /*
  * Delete the given subdirectory contents from the new cluster
@@ -880,9 +747,9 @@ set_frozenxids(bool minmxid_only)
 		/*
 		 * We must update databases where datallowconn = false, e.g.
 		 * template0, because autovacuum increments their datfrozenxids,
-		 * relfrozenxids, and relminmxid  even if autovacuum is turned off,
-		 * and even though all the data rows are already frozen  To enable
-		 * this, we temporarily change datallowconn.
+		 * relfrozenxids, and relminmxid even if autovacuum is turned off, and
+		 * even though all the data rows are already frozen.  To enable this,
+		 * we temporarily change datallowconn.
 		 */
 		if (strcmp(datallowconn, "f") == 0)
 		{
@@ -954,40 +821,6 @@ set_frozenxids(bool minmxid_only)
 	PQclear(dbres);
 
 	PQfinish(conn_template1);
-
-	check_ok();
-}
-
-/*
- * Called for GPDB segments only -- since we have copied the master's
- * pg_control file, we need to assign a new system identifier to each segment.
- */
-static void
-reset_system_identifier(void)
-{
-	struct timeval	tv;
-	uint64			sysidentifier;
-
-	prep_status("Setting database system identifier for new cluster");
-
-	/*
-	 * Use the same initialization process as BootStrapXLOG():
-	 *
-	 * - 32 bits of [current timestamp] seconds
-	 * - 20 bits of [current timestamp] microseconds
-	 * - 12 bits of PID
-	 *
-	 * This doesn't guarantee uniqueness, but if it's good enough for
-	 * gpinitsystem it should be good enough for us.
-	 */
-	gettimeofday(&tv, NULL);
-	sysidentifier = ((uint64) tv.tv_sec) << 32;
-	sysidentifier |= ((uint64) tv.tv_usec) << 12;
-	sysidentifier |= getpid() & 0xFFF;
-
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "\"%s/pg_resetxlog\" --binary-upgrade --system-identifier " UINT64_FORMAT " \"%s\"",
-			  new_cluster.bindir, sysidentifier, new_cluster.pgdata);
 
 	check_ok();
 }

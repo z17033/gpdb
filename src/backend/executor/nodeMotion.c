@@ -27,7 +27,6 @@
 #include "executor/nodeMotion.h"
 #include "lib/binaryheap.h"
 #include "utils/tuplesort.h"
-#include "utils/tuplesort_mk_details.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
 
@@ -103,7 +102,6 @@ static void CdbMergeComparator_DestroyContext(CdbMergeComparatorContext *ctx);
 static TupleTableSlot *execMotionSender(MotionState *node);
 static TupleTableSlot *execMotionUnsortedReceiver(MotionState *node);
 static TupleTableSlot *execMotionSortedReceiver(MotionState *node);
-static TupleTableSlot *execMotionSortedReceiver_mk(MotionState *node);
 
 static void execMotionSortedReceiverFirstTime(MotionState *node);
 
@@ -193,12 +191,7 @@ ExecMotion(MotionState *node)
 			node->ps.state->active_recv_id = motion->motionID;
 
 		if (motion->sendSorted)
-		{
-			if (gp_enable_motion_mk_sort)
-				tuple = execMotionSortedReceiver_mk(node);
-			else
-				tuple = execMotionSortedReceiver(node);
-		}
+			tuple = execMotionSortedReceiver(node);
 		else
 			tuple = execMotionUnsortedReceiver(node);
 
@@ -258,13 +251,8 @@ execMotionSender(MotionState *node)
 	bool		done = false;
 	int			numsegments = 0;
 
-	/* need refactor */
-	if (node->isExplictGatherMotion)
-	{
+	if (motion->motionType == MOTIONTYPE_GATHER_SINGLE)
 		numsegments = motion->plan.flow->numsegments;
-	}
-
-
 
 #ifdef MEASURE_MOTION_TIME
 	struct timeval time1;
@@ -274,6 +262,7 @@ execMotionSender(MotionState *node)
 #endif
 
 	AssertState(motion->motionType == MOTIONTYPE_GATHER ||
+				motion->motionType == MOTIONTYPE_GATHER_SINGLE ||
 				motion->motionType == MOTIONTYPE_HASH ||
 				motion->motionType == MOTIONTYPE_BROADCAST ||
 				(motion->motionType == MOTIONTYPE_EXPLICIT && motion->segidColIdx > 0));
@@ -309,12 +298,13 @@ execMotionSender(MotionState *node)
 			doSendEndOfStream(motion, node);
 			done = true;
 		}
-		else if (node->isExplictGatherMotion &&
+		else if (motion->motionType == MOTIONTYPE_GATHER_SINGLE &&
 				 GpIdentity.segindex != (gp_session_id % numsegments))
 		{
 			/*
-			 * For explicit gather motion, receiver get data from the
-			 * singleton segment explictly.
+			 * For explicit gather motion, receiver gets data from one
+			 * segment only. The others execute the subplan normally, but
+			 * throw away the resulting tuples.
 			 */
 		}
 		else
@@ -366,6 +356,7 @@ execMotionUnsortedReceiver(MotionState *node)
 	Motion	   *motion = (Motion *) node->ps.plan;
 
 	AssertState(motion->motionType == MOTIONTYPE_GATHER ||
+				motion->motionType == MOTIONTYPE_GATHER_SINGLE ||
 				motion->motionType == MOTIONTYPE_HASH ||
 				motion->motionType == MOTIONTYPE_BROADCAST ||
 				(motion->motionType == MOTIONTYPE_EXPLICIT && motion->segidColIdx > 0));
@@ -457,179 +448,6 @@ execMotionUnsortedReceiver(MotionState *node)
  * Then we again select the lowest value and return that tuple.
  *
  */
-
-/* Sorted receiver using mk heap */
-typedef struct MotionMKHeapReaderContext
-{
-	MotionState *node;
-	int			srcRoute;
-} MotionMKHeapReaderContext;
-
-typedef struct MotionMKHeapContext
-{
-	MKHeapReader *readers;		/* Readers, one per sender */
-	MKHeap	   *heap;			/* The mkheap */
-	MKContext	mkctxt;			/* compare context */
-} MotionMKHeapContext;
-
-static bool
-motion_mkhp_read(void *vpctxt, MKEntry *a)
-{
-	MotionMKHeapReaderContext *ctxt = (MotionMKHeapReaderContext *) vpctxt;
-	MotionState *node = ctxt->node;
-
-	GenericTuple inputTuple = NULL;
-	Motion	   *motion = (Motion *) node->ps.plan;
-
-	if (ctxt->srcRoute < 0)
-	{
-		/* routes have not been set yet so set them */
-		ListCell   *lcProcess;
-		int			routeIndex,
-					readerIndex;
-		MotionMKHeapContext *ctxt = node->tupleheap_mk;
-		Slice	   *sendSlice = (Slice *) list_nth(node->ps.state->es_sliceTable->slices, motion->motionID);
-
-		Assert(sendSlice->sliceIndex == motion->motionID);
-
-		readerIndex = 0;
-		foreach_with_count(lcProcess, sendSlice->primaryProcesses, routeIndex)
-		{
-			if (lfirst(lcProcess) != NULL)
-			{
-				MotionMKHeapReaderContext *readerContext;
-
-				Assert(readerIndex < node->numInputSegs);
-
-				readerContext = (MotionMKHeapReaderContext *) ctxt->readers[readerIndex].mkhr_ctxt;
-				readerContext->srcRoute = routeIndex;
-				readerIndex++;
-			}
-		}
-		Assert(readerIndex == node->numInputSegs);
-	}
-
-	MemSet(a, 0, sizeof(MKEntry));
-
-	/* Receive the successor of the tuple that we returned last time. */
-	inputTuple = RecvTupleFrom(node->ps.state->motionlayer_context,
-							   node->ps.state->interconnect_context,
-							   motion->motionID,
-							   ctxt->srcRoute);
-
-	if (inputTuple)
-	{
-		a->ptr = inputTuple;
-		return true;
-	}
-
-	return false;
-}
-
-static Datum
-tupsort_fetch_datum_motion(MKEntry *a, MKContext *mkctxt, MKLvContext *lvctxt, bool *isNullOut)
-{
-	Datum		d;
-
-	if (is_memtuple(a->ptr))
-		d = memtuple_getattr((MemTuple) a->ptr, mkctxt->mt_bind, lvctxt->attno, isNullOut);
-	else
-		d = heap_getattr((HeapTuple) a->ptr, lvctxt->attno, mkctxt->tupdesc, isNullOut);
-	return d;
-}
-
-static void
-tupsort_free_datum_motion(MKEntry *e)
-{
-	pfree(e->ptr);
-	e->ptr = NULL;
-}
-
-static void
-create_motion_mk_heap(MotionState *node)
-{
-	MotionMKHeapContext *ctxt = palloc0(sizeof(MotionMKHeapContext));
-	Motion	   *motion = (Motion *) node->ps.plan;
-	int			nreader = node->numInputSegs;
-	int			i = 0;
-
-	Assert(nreader >= 1);
-
-	create_mksort_context(
-						  &ctxt->mkctxt,
-						  motion->numSortCols, motion->sortColIdx,
-						  motion->sortOperators,
-						  motion->collations,
-						  motion->nullsFirst,
-						  NULL,
-						  tupsort_fetch_datum_motion,
-						  tupsort_free_datum_motion,
-						  ExecGetResultType(&node->ps), false, 0 /* dummy does not matter */ );
-
-	ctxt->readers = palloc0(sizeof(MKHeapReader) * nreader);
-
-	for (i = 0; i < nreader; ++i)
-	{
-		MotionMKHeapReaderContext *hrctxt = palloc(sizeof(MotionMKHeapContext));
-
-		hrctxt->node = node;
-		hrctxt->srcRoute = -1;	/* set to a negative to indicate that we need
-								 * to update it to the real value */
-		ctxt->readers[i].reader = motion_mkhp_read;
-		ctxt->readers[i].mkhr_ctxt = hrctxt;
-	}
-
-	node->tupleheap_mk = ctxt;
-}
-
-static void
-destroy_motion_mk_heap(MotionState *node)
-{
-	/*
-	 * Don't need to do anything.  Memory is allocated from query execution
-	 * context.  By calling this, we are at the end of the life of a query.
-	 */
-}
-
-static TupleTableSlot *
-execMotionSortedReceiver_mk(MotionState *node)
-{
-	TupleTableSlot *slot = NULL;
-	MKEntry		e;
-
-	Motion	   *motion = (Motion *) node->ps.plan;
-	MotionMKHeapContext *ctxt = node->tupleheap_mk;
-
-	Assert(motion->motionType == MOTIONTYPE_GATHER &&
-		   motion->sendSorted &&
-		   ctxt
-		);
-
-	if (node->stopRequested)
-	{
-		SendStopMessage(node->ps.state->motionlayer_context,
-						node->ps.state->interconnect_context,
-						motion->motionID);
-		return NULL;
-	}
-
-	if (!node->tupleheapReady)
-	{
-		Assert(ctxt->readers);
-		Assert(!ctxt->heap);
-		ctxt->heap = mkheap_from_reader(ctxt->readers, node->numInputSegs, &ctxt->mkctxt);
-		node->tupleheapReady = true;
-	}
-
-	mke_set_empty(&e);
-	mkheap_putAndGet(ctxt->heap, &e);
-	if (mke_is_empty(&e))
-		return NULL;
-
-	slot = node->ps.ps_ResultTupleSlot;
-	slot = ExecStoreGenericTuple(e.ptr, slot, true);
-	return slot;
-}
 
 /* Sorted receiver using binary heap */
 static TupleTableSlot *
@@ -899,7 +717,6 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 	Assert(node->motionID <= sliceTable->nMotions);
 
 	estate->currentSliceIdInPlan = node->motionID;
-	estate->currentExecutingSliceId = node->motionID;
 
 	/*
 	 * create state structure
@@ -911,7 +728,6 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 	motionstate->stopRequested = false;
 	motionstate->hashExprs = NIL;
 	motionstate->cdbhash = NULL;
-	motionstate->isExplictGatherMotion = false;
 
 	/* Look up the sending gang's slice table entry. */
 	sendSlice = (Slice *) list_nth(sliceTable->slices, node->motionID);
@@ -926,7 +742,8 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 		/* Look up the receiving (parent) gang's slice table entry. */
 		recvSlice = (Slice *) list_nth(sliceTable->slices, sendSlice->parentIndex);
 
-		if (node->motionType == MOTIONTYPE_GATHER)
+		if (node->motionType == MOTIONTYPE_GATHER ||
+			node->motionType == MOTIONTYPE_GATHER_SINGLE)
 		{
 			/* Sending to a single receiving process on the entry db? */
 			/* Is receiving slice a root slice that runs here in the qDisp? */
@@ -943,7 +760,7 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 			{
 				/* sanity checks */
 				if (recvSlice->gangSize != 1)
-					elog(ERROR, "unexpected gang size: %d", recvSlice->gangSize);
+					elog(WARNING, "unexpected gang size: %d", recvSlice->gangSize);
 			}
 		}
 
@@ -968,19 +785,6 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 			motionstate->mstype = MOTIONSTATE_SEND;
 		}
 		/* TODO: If neither sending nor receiving, don't bother to initialize. */
-	}
-
-	/*
-	 * If it's gather motion and subplan's locus is CdbLocusType_Replicated,
-	 * mark isExplictGatherMotion to true
-	 */
-	if (motionstate->mstype == MOTIONSTATE_SEND &&
-		node->motionType == MOTIONTYPE_GATHER &&
-		outerPlan(node) &&
-		outerPlan(node)->flow &&
-		outerPlan(node)->flow->locustype == CdbLocusType_Replicated)
-	{
-		motionstate->isExplictGatherMotion = true;
 	}
 
 	motionstate->tupleheapReady = false;
@@ -1097,27 +901,22 @@ ExecInitMotion(Motion *node, EState *estate, int eflags)
 	/* Merge Receive: Set up the key comparator and priority queue. */
 	if (node->sendSorted && motionstate->mstype == MOTIONSTATE_RECV)
 	{
-		if (gp_enable_motion_mk_sort)
-			create_motion_mk_heap(motionstate);
-		else
-		{
-			/* Allocate context object for the key comparator. */
-			motionstate->tupleheap_entries =
-				palloc(motionstate->numInputSegs * sizeof(CdbTupleHeapInfo));
-			/* Create the priority queue structure. */
-			motionstate->tupleheap_cxt =
-				CdbMergeComparator_CreateContext(motionstate->tupleheap_entries,
-												 tupDesc,
-												 node->numSortCols,
-												 node->sortColIdx,
-												 node->sortOperators,
-												 node->collations,
-												 node->nullsFirst);
-			motionstate->tupleheap =
-				binaryheap_allocate(motionstate->numInputSegs,
-									CdbMergeComparator,
-									motionstate->tupleheap_cxt);
-		}
+		/* Allocate context object for the key comparator. */
+		motionstate->tupleheap_entries =
+			palloc(motionstate->numInputSegs * sizeof(CdbTupleHeapInfo));
+		/* Create the priority queue structure. */
+		motionstate->tupleheap_cxt =
+			CdbMergeComparator_CreateContext(motionstate->tupleheap_entries,
+											 tupDesc,
+											 node->numSortCols,
+											 node->sortColIdx,
+											 node->sortOperators,
+											 node->collations,
+											 node->nullsFirst);
+		motionstate->tupleheap =
+			binaryheap_allocate(motionstate->numInputSegs,
+								CdbMergeComparator,
+								motionstate->tupleheap_cxt);
 	}
 
 	/*
@@ -1170,9 +969,6 @@ ExecEndMotion(MotionState *node)
 	 */
 	Assert(node->ps.state != NULL);
 	node->ps.state->currentSliceIdInPlan = motNodeID;
-	int			parentExecutingSliceId = node->ps.state->currentExecutingSliceId;
-
-	node->ps.state->currentExecutingSliceId = motNodeID;
 
 	/*
 	 * shut down the subplan
@@ -1231,11 +1027,6 @@ ExecEndMotion(MotionState *node)
 		CdbMergeComparator_DestroyContext(node->tupleheap_cxt);
 		node->tupleheap = NULL;
 	}
-	if (node->tupleheap_mk)
-	{
-		destroy_motion_mk_heap(node);
-		node->tupleheap_mk = NULL;
-	}
 
 	/* Free the slices and routes */
 	if (node->cdbhash != NULL)
@@ -1256,13 +1047,7 @@ ExecEndMotion(MotionState *node)
 		pfree(node->outputFunArray);
 #endif
 
-	/*
-	 * Temporarily set currentExecutingSliceId to the parent value, since this
-	 * motion might be in the top slice of an InitPlan.
-	 */
-	node->ps.state->currentExecutingSliceId = parentExecutingSliceId;
 	EndPlanStateGpmonPkt(&node->ps);
-	node->ps.state->currentExecutingSliceId = motNodeID;
 }
 
 
@@ -1497,7 +1282,8 @@ doSendTuple(Motion *motion, MotionState *node, TupleTableSlot *outerTupleSlot)
 	/* We got a tuple from the child-plan. */
 	node->numTuplesFromChild++;
 
-	if (motion->motionType == MOTIONTYPE_GATHER)
+	if (motion->motionType == MOTIONTYPE_GATHER ||
+		motion->motionType == MOTIONTYPE_GATHER_SINGLE)
 	{
 		/*
 		 * Actually, since we can only send to a single output segment

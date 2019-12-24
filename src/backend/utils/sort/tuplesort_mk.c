@@ -1231,7 +1231,11 @@ tuplesort_putdatum_mk(Tuplesortstate_mk *state, Datum val, bool isNull)
 	{
 		mke_set_not_null(&e);
 		e.d = datumCopy(val, false, state->datumTypeLen);
-		state->totalTupleBytes += state->datumTypeLen;
+
+		if (state->datumTypeLen > 0)
+			state->totalTupleBytes += state->datumTypeLen;
+		else
+			state->totalTupleBytes += datumGetSize(val, state->datumTypeByVal, state->datumTypeLen);
 	}
 
 	puttuple_common(state, &e);
@@ -1662,14 +1666,14 @@ tuplesort_gettuple_common_pos(Tuplesortstate_mk *state, TuplesortPos_mk *pos,
  */
 bool
 tuplesort_gettupleslot_mk(Tuplesortstate_mk *state, bool forward,
-						  TupleTableSlot *slot)
+						  TupleTableSlot *slot, Datum *abbrev)
 {
-	return tuplesort_gettupleslot_pos_mk(state, &state->pos, forward, slot, state->sortcontext);
+	return tuplesort_gettupleslot_pos_mk(state, &state->pos, forward, slot, abbrev, state->sortcontext);
 }
 
 bool
 tuplesort_gettupleslot_pos_mk(Tuplesortstate_mk *state, TuplesortPos_mk *pos,
-				  bool forward, TupleTableSlot *slot, MemoryContext mcontext)
+				  bool forward, TupleTableSlot *slot, Datum *abbrev, MemoryContext mcontext)
 {
 	MemoryContext oldcontext = MemoryContextSwitchTo(mcontext);
 	MKEntry		e;
@@ -1747,7 +1751,7 @@ tuplesort_getindextuple_mk(Tuplesortstate_mk *state, bool forward,
  */
 bool
 tuplesort_getdatum_mk(Tuplesortstate_mk *state, bool forward,
-					  Datum *val, bool *isNull)
+					  Datum *val, bool *isNull, Datum *abbrev)
 {
 	MemoryContext oldcontext = MemoryContextSwitchTo(state->sortcontext);
 	MKEntry		e;

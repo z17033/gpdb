@@ -15,11 +15,12 @@ override CPPFLAGS := -I$(libpq_srcdir) $(CPPFLAGS)
 
 
 OBJS = execAmi.o execCurrent.o execGrouping.o execIndexing.o execJunk.o \
-       execMain.o execProcnode.o execQual.o execScan.o execTuples.o \
+       execMain.o execParallel.o execProcnode.o execQual.o \
+       execScan.o execTuples.o \
        execUtils.o functions.o instrument.o nodeAppend.o nodeAgg.o \
        nodeBitmapAnd.o nodeBitmapOr.o \
-       nodeBitmapHeapscan.o nodeBitmapIndexscan.o nodeCustom.o nodeHash.o \
-       nodeHashjoin.o nodeIndexscan.o nodeIndexonlyscan.o \
+       nodeBitmapHeapscan.o nodeBitmapIndexscan.o nodeCustom.o nodeGather.o \
+       nodeHash.o nodeHashjoin.o nodeIndexscan.o nodeIndexonlyscan.o \
        nodeLimit.o nodeLockRows.o \
        nodeMaterial.o nodeMergeAppend.o nodeMergejoin.o nodeModifyTable.o \
        nodeNestloop.o nodeFunctionscan.o nodeRecursiveunion.o nodeResult.o \
@@ -41,7 +42,6 @@ OBJS += nodeExternalscan.o \
        nodeRowTrigger.o \
        nodeAssertOp.o \
        nodeSplitUpdate.o \
-       nodeDML.o \
        execDML.o \
        nodePartitionSelector.o \
        execDynamicScan.o \

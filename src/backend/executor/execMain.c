@@ -28,7 +28,7 @@
  *
  * Portions Copyright (c) 2005-2010, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -62,7 +62,6 @@
 #include "commands/tablecmds.h" /* XXX: temp for get_parts() */
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
-#include "executor/execDML.h"
 #include "executor/execdebug.h"
 #include "executor/execUtils.h"
 #include "executor/instrument.h"
@@ -132,9 +131,10 @@ static void CheckValidRowMarkRel(Relation rel, RowMarkType markType);
 static void ExecPostprocessPlan(EState *estate);
 static void ExecEndPlan(PlanState *planstate, EState *estate);
 static void ExecutePlan(EState *estate, PlanState *planstate,
+			bool use_parallel_mode,
 			CmdType operation,
 			bool sendTuples,
-			long numberTuples,
+			uint64 numberTuples,
 			ScanDirection direction,
 			DestReceiver *dest);
 static bool ExecCheckRTEPermsModified(Oid relOid, Oid userid,
@@ -186,6 +186,8 @@ typedef struct CopyDirectDispatchToSliceContext
 {
 	plan_tree_base_prefix	base; /* Required prefix for plan_tree_walker/mutator */
 	EState					*estate; /* EState instance */
+
+	Bitmapset *processed_subplans;
 } CopyDirectDispatchToSliceContext;
 
 static bool CopyDirectDispatchFromPlanToSliceTableWalker( Node *node, CopyDirectDispatchToSliceContext *context);
@@ -209,8 +211,8 @@ CopyDirectDispatchToSlice( Plan *ddPlan, int sliceId, CopyDirectDispatchToSliceC
 static bool
 CopyDirectDispatchFromPlanToSliceTableWalker( Node *node, CopyDirectDispatchToSliceContext *context)
 {
-	int sliceId = -1;
-	Plan *ddPlan = NULL;
+	int			sliceId = -1;
+	bool		recurse_into_subplan = true;
 
 	if (node == NULL)
 		return false;
@@ -219,15 +221,29 @@ CopyDirectDispatchFromPlanToSliceTableWalker( Node *node, CopyDirectDispatchToSl
 	{
 		Motion *motion = (Motion *) node;
 
-		ddPlan = (Plan*)node;
 		sliceId = motion->motionID;
+
+		CopyDirectDispatchToSlice(&motion->plan, sliceId, context);
+	}
+	else if (IsA(node, SubPlan))
+	{
+		SubPlan	   *spexpr = (SubPlan *) node;
+
+		/*
+		 * Only recurse into each subplan on first encounter. But do process
+		 * any test expressions on the SubPlan node itself, in any case. (I'm
+		 * not sure if the test expressions can actually be different on
+		 * different SubPlan references to the same subquery, but let's not
+		 * assume that they can't be.)
+		 */
+		if (!bms_is_member(spexpr->plan_id, context->processed_subplans))
+			context->processed_subplans = bms_add_member(context->processed_subplans, spexpr->plan_id);
+		else
+			recurse_into_subplan = false;
 	}
 
-	if (ddPlan != NULL)
-	{
-		CopyDirectDispatchToSlice(ddPlan, sliceId, context);
-	}
-	return plan_tree_walker(node, CopyDirectDispatchFromPlanToSliceTableWalker, context, true);
+	return plan_tree_walker(node, CopyDirectDispatchFromPlanToSliceTableWalker, context,
+							recurse_into_subplan);
 }
 
 static void
@@ -236,6 +252,7 @@ CopyDirectDispatchFromPlanToSliceTable(PlannedStmt *stmt, EState *estate)
 	CopyDirectDispatchToSliceContext context;
 	exec_init_plan_tree_base(&context.base, stmt);
 	context.estate = estate;
+	context.processed_subplans = NULL;
 	CopyDirectDispatchToSlice( stmt->planTree, 0, &context);
 	CopyDirectDispatchFromPlanToSliceTableWalker((Node *) stmt->planTree, &context);
 }
@@ -461,22 +478,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			queryDesc->ddesc->useChangedAOOpts = true;
 		}
 
-		/*
-		 * If this is an extended query (normally cursor or bind/exec) - before
-		 * starting the portal, we need to make sure that the shared snapshot is
-		 * already set by a writer gang, or the cursor query readers will
-		 * timeout waiting for one that may not exist (in some cases). Therefore
-		 * we insert a small hack here and dispatch a SET query that will do it
-		 * for us. (This is also done in performOpenCursor() for the simple
-		 * query protocol).
-		 *
-		 * MPP-7504/MPP-7448: We also call this down inside the dispatcher after
-		 * the pre-dispatch evaluator has run.
-		 */
-		if (queryDesc->extended_query) {
-			verify_shared_snapshot_ready();
-		}
-
 		/* Set up blank slice table to be filled in during InitPlan. */
 		InitSliceTable(estate, queryDesc->plannedstmt->nMotionNodes, queryDesc->plannedstmt->nInitPlans);
 
@@ -541,7 +542,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			estate->es_cursorPositions = ddesc->cursorPositions;
 
 			estate->currentSliceIdInPlan = slice->rootIndex;
-			estate->currentExecutingSliceId = slice->rootIndex;
 
 			/* set our global sliceid variable for elog. */
 			currentSliceId = LocallyExecutingSliceIndex(estate);
@@ -741,6 +741,7 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 		else
 			exec_identity = GP_IGNORE;
 
+#ifdef USE_ASSERT_CHECKING
 		/* non-root on QE */
 		if (exec_identity == GP_NON_ROOT_ON_QE)
 		{
@@ -749,11 +750,10 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			Assert(motionState);
 
 			Assert(IsA(motionState->ps.plan, Motion));
-
-			ExecUpdateTransportState((PlanState *) motionState,
-									 estate->interconnect_context);
 		}
-		else if (exec_identity == GP_ROOT_SLICE)
+		else
+#endif
+		if (exec_identity == GP_ROOT_SLICE)
 		{
 			/* Run a root slice. */
 			if (queryDesc->planstate != NULL &&
@@ -765,12 +765,6 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 				SetupInterconnect(estate);
 				Assert(estate->interconnect_context);
 				UpdateMotionExpectedReceivers(estate->motionlayer_context, estate->es_sliceTable);
-			}
-
-			if (estate->es_interconnect_is_setup)
-			{
-				ExecUpdateTransportState(queryDesc->planstate,
-										 estate->interconnect_context);
 			}
 		}
 		else if (exec_identity != GP_IGNORE)
@@ -848,7 +842,7 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
  */
 void
 ExecutorRun(QueryDesc *queryDesc,
-			ScanDirection direction, long count)
+			ScanDirection direction, uint64 count)
 {
 	if (ExecutorRun_hook)
 		(*ExecutorRun_hook) (queryDesc, direction, count);
@@ -858,7 +852,7 @@ ExecutorRun(QueryDesc *queryDesc,
 
 void
 standard_ExecutorRun(QueryDesc *queryDesc,
-					 ScanDirection direction, long count)
+					 ScanDirection direction, uint64 count)
 {
 	EState	   *estate;
 	CmdType		operation;
@@ -973,6 +967,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 
 			ExecutePlan(estate,
 						(PlanState *) motionState,
+						queryDesc->plannedstmt->parallelModeNeeded,
 						CMD_SELECT,
 						sendTuples,
 						0,
@@ -1007,6 +1002,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 			 */
 			ExecutePlan(estate,
 						queryDesc->planstate,
+						queryDesc->plannedstmt->parallelModeNeeded,
 						operation,
 						(GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER ? true : sendTuples),
 						count,
@@ -2554,9 +2550,12 @@ InitResultRelInfo(ResultRelInfo *resultRelInfo,
 	else
 		resultRelInfo->ri_FdwRoutine = NULL;
 	resultRelInfo->ri_FdwState = NULL;
+	resultRelInfo->ri_usesFdwDirectModify = false;
 	resultRelInfo->ri_ConstraintExprs = NULL;
 	resultRelInfo->ri_junkFilter = NULL;
 	resultRelInfo->ri_segid_attno = InvalidAttrNumber;
+	resultRelInfo->ri_action_attno = InvalidAttrNumber;
+	resultRelInfo->ri_tupleoid_attno = InvalidAttrNumber;
 	resultRelInfo->ri_projectReturning = NULL;
 	resultRelInfo->ri_aoInsertDesc = NULL;
 	resultRelInfo->ri_aocsInsertDesc = NULL;
@@ -3041,14 +3040,15 @@ ExecEndPlan(PlanState *planstate, EState *estate)
 static void
 ExecutePlan(EState *estate,
 			PlanState *planstate,
+			bool use_parallel_mode,
 			CmdType operation,
 			bool sendTuples,
-			long numberTuples,
+			uint64 numberTuples,
 			ScanDirection direction,
 			DestReceiver *dest)
 {
 	TupleTableSlot *slot;
-	long		current_tuple_count;
+	uint64		current_tuple_count;
 
 	/*
 	 * initialize local variables
@@ -3064,6 +3064,19 @@ ExecutePlan(EState *estate,
 	 * Make sure slice dependencies are met
 	 */
 	ExecSliceDependencyNode(planstate);
+	/*
+	 * If a tuple count was supplied, we must force the plan to run without
+	 * parallelism, because we might exit early.
+	 */
+	if (numberTuples)
+		use_parallel_mode = false;
+
+	/*
+	 * If a tuple count was supplied, we must force the plan to run without
+	 * parallelism, because we might exit early.
+	 */
+	if (use_parallel_mode)
+		EnterParallelMode();
 
 	/*
 	 * Loop until we've processed the proper number of tuples from the plan.
@@ -3091,6 +3104,8 @@ ExecutePlan(EState *estate,
 			 * received in order to do the right cleanup.
 			 */
 			estate->es_got_eos = true;
+			/* Allow nodes to release or shut down resources. */
+			(void) ExecShutdownNode(planstate);
 			break;
 		}
 
@@ -3115,7 +3130,15 @@ ExecutePlan(EState *estate,
 		 * practice, this is probably always the case at this point.)
 		 */
 		if (sendTuples)
-			(*dest->receiveSlot) (slot, dest);
+		{
+			/*
+			 * If we are not able to send the tuple, we assume the destination
+			 * has closed and no more tuples can be sent. If that's the case,
+			 * end the loop.
+			 */
+			if (!((*dest->receiveSlot) (slot, dest)))
+				break;
+		}
 
 		/*
 		 * Count tuples processed, if this is a SELECT.  (For other operation
@@ -3157,6 +3180,9 @@ ExecutePlan(EState *estate,
 		if (numberTuples && numberTuples == current_tuple_count)
 			break;
 	}
+
+	if (use_parallel_mode)
+		ExitParallelMode();
 }
 
 
@@ -3373,23 +3399,35 @@ ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
 
 					ereport(ERROR,
 							(errcode(ERRCODE_WITH_CHECK_OPTION_VIOLATION),
-					  errmsg("new row violates WITH CHECK OPTION for \"%s\"",
+					  errmsg("new row violates check option for view \"%s\"",
 							 wco->relname),
 							 val_desc ? errdetail("Failing row contains %s.",
 												  val_desc) : 0));
 					break;
 				case WCO_RLS_INSERT_CHECK:
 				case WCO_RLS_UPDATE_CHECK:
-					ereport(ERROR,
-							(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-							 errmsg("new row violates row level security policy for \"%s\"",
-									wco->relname)));
+					if (wco->polname != NULL)
+						ereport(ERROR,
+								(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+								 errmsg("new row violates row-level security policy \"%s\" for table \"%s\"",
+										wco->polname, wco->relname)));
+					else
+						ereport(ERROR,
+								(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+								 errmsg("new row violates row-level security policy for table \"%s\"",
+										wco->relname)));
 					break;
 				case WCO_RLS_CONFLICT_CHECK:
-					ereport(ERROR,
-							(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-							 errmsg("new row violates row level security policy (USING expression) for \"%s\"",
-									wco->relname)));
+					if (wco->polname != NULL)
+						ereport(ERROR,
+								(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+								 errmsg("new row violates row-level security policy \"%s\" (USING expression) for table \"%s\"",
+										wco->polname, wco->relname)));
+					else
+						ereport(ERROR,
+								(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+								 errmsg("new row violates row-level security policy (USING expression) for table \"%s\"",
+										wco->relname)));
 					break;
 				default:
 					elog(ERROR, "unrecognized WCO kind: %u", wco->kind);
@@ -3439,7 +3477,7 @@ ExecBuildSlotValueDescription(Oid reloid,
 	 * then don't return anything.  Otherwise, go through normal permission
 	 * checks.
 	 */
-	if (check_enable_rls(reloid, GetUserId(), true) == RLS_ENABLED)
+	if (check_enable_rls(reloid, InvalidOid, true) == RLS_ENABLED)
 		return NULL;
 
 	initStringInfo(&buf);
@@ -5051,27 +5089,6 @@ FillSliceTable_walker(Node *node, void *context)
 				else
 					FillSliceGangInfo(currentSlice, getgpsegmentCount());
 			}
-		}
-	}
-	/* A DML node is the same as a ModifyTable node, in ORCA plans. */
-	if (IsA(node, DML))
-	{
-		DML		   *dml = (DML *) node;
-		int			idx = dml->scanrelid;
-		Oid			reloid = getrelid(idx, stmt->rtable);
-		GpPolicyType policyType;
-
-		policyType = GpPolicyFetch(reloid)->ptype;
-
-		if (policyType != POLICYTYPE_ENTRY)
-		{
-			Slice	   *currentSlice = (Slice *) list_nth(sliceTable->slices, cxt->currentSliceId);
-
-			currentSlice->gangType = GANGTYPE_PRIMARY_WRITER;
-
-			/* DML node can only be genereated by ORCA */
-			Assert(stmt->planGen == PLANGEN_OPTIMIZER);
-			FillSliceGangInfo(currentSlice, getgpsegmentCount());
 		}
 	}
 

@@ -20,9 +20,7 @@
 #include "nodes/relation.h"
 #include "optimizer/walkers.h"
 
-extern Plan *apply_motion(struct PlannerInfo *root, Plan *plan,
-						  bool *needToAssignDirectDispatchContentIds,
-						  int   cursorOptions);
+extern Plan *apply_motion(struct PlannerInfo *root, Plan *plan, int cursorOptions);
 
 extern Motion *make_union_motion(Plan *lefttree, int numsegments);
 extern Motion *make_sorted_union_motion(PlannerInfo *root, Plan *lefttree, int numSortCols, AttrNumber *sortColIdx, Oid *sortOperators,
@@ -37,7 +35,8 @@ extern Motion *make_broadcast_motion(Plan *lefttree,
 
 extern Plan *make_explicit_motion(PlannerInfo *root,
 								  Plan *lefttree,
-								  AttrNumber segidColIdx);
+								  AttrNumber segidColIdx,
+								  int numsegments);
 
 void 
 cdbmutate_warn_ctid_without_segid(struct PlannerInfo *root, struct RelOptInfo *rel);
@@ -46,7 +45,6 @@ extern Plan *apply_shareinput_dag_to_tree(PlannerInfo *root, Plan *plan);
 extern void collect_shareinput_producers(PlannerInfo *root, Plan *plan);
 extern Plan *replace_shareinput_targetlists(PlannerInfo *root, Plan *plan);
 extern Plan *apply_shareinput_xslice(Plan *plan, PlannerInfo *root);
-extern void assign_plannode_id(PlannedStmt *stmt);
 
 extern List *getExprListFromTargetList(List *tlist, int numCols, AttrNumber *colIdx);
 extern void remove_unused_initplans(Plan *plan, PlannerInfo *root);
@@ -58,10 +56,7 @@ extern Node *exec_make_plan_constant(struct PlannedStmt *stmt, EState *estate,
 						bool is_SRI, List **cursorPositions);
 extern void remove_subquery_in_RTEs(Node *node);
 
-extern void sri_optimize_for_result(PlannerInfo *root, Plan *plan, RangeTblEntry *rte,
-									GpPolicy **targetPolicy, List **hashExprs_p, List **hashOpclasses_p);
-extern SplitUpdate *make_splitupdate(PlannerInfo *root, ModifyTable *mt, Plan *subplan,
-									 RangeTblEntry *rte);
+extern Plan *cdbpathtoplan_create_sri_plan(RangeTblEntry *rte, PlannerInfo *subroot, Path *subpath, int createplan_flags);
 
 extern bool contains_outer_params(Node *node, void *context);
 

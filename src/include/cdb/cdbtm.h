@@ -7,7 +7,6 @@
 #ifndef CDBTM_H
 #define CDBTM_H
 
-#include "storage/lwlock.h"
 #include "lib/stringinfo.h"
 #include "access/xlogdefs.h"
 #include "cdb/cdbdistributedsnapshot.h"
@@ -15,7 +14,6 @@
 #include "cdb/cdbdtxcontextinfo.h"
 #include "cdb/cdbpublic.h"
 #include "nodes/plannodes.h"
-#include "storage/s_lock.h"
 
 struct Gang;
 
@@ -101,7 +99,6 @@ typedef enum
 	DTX_PROTOCOL_COMMAND_COMMIT_ONEPHASE,
 	DTX_PROTOCOL_COMMAND_COMMIT_PREPARED,
 	/* for explicit transaction that doesn't write any xlog */
-	DTX_PROTOCOL_COMMAND_COMMIT_NOT_PREPARED,
 	DTX_PROTOCOL_COMMAND_ABORT_PREPARED,
 	DTX_PROTOCOL_COMMAND_RETRY_COMMIT_PREPARED,
 	DTX_PROTOCOL_COMMAND_RETRY_ABORT_PREPARED,
@@ -217,7 +214,7 @@ typedef struct TMGXACT
 	 */
 	DistributedTransactionId	xminDistributedSnapshot;
 
-	bool						needIncludedInCkpt;
+	bool						includeInCkpt;
 	int							sessionId;
 }	TMGXACT;
 
@@ -259,22 +256,6 @@ typedef struct TMGALLXACTSTATUS
 } TMGALLXACTSTATUS;
 
 
-typedef struct TmControlBlock
-{
-	DistributedTransactionTimeStamp	distribTimeStamp;
-	DistributedTransactionId	seqno;
-	bool						DtmStarted;
-	uint32						NextSnapshotId;
-	int							num_committed_xacts;
-
-    /* Array [0..max_tm_gxacts-1] of TMGXACT_LOG ptrs is appended starting here */
-	TMGXACT_LOG  			    committed_gxact_array[1];
-}	TmControlBlock;
-
-
-#define TMCONTROLBLOCK_BYTES(num_gxacts) \
-	(offsetof(TmControlBlock, committed_gxact_array) + sizeof(TMGXACT_LOG) * (num_gxacts))
-
 #define DTM_DEBUG3 (Debug_print_full_dtm ? LOG : DEBUG3)
 #define DTM_DEBUG5 (Debug_print_full_dtm ? LOG : DEBUG5)
 
@@ -302,6 +283,7 @@ extern void dtxFormGID(char *gid,
 					   DistributedTransactionTimeStamp tstamp,
 					   DistributedTransactionId gxid);
 extern DistributedTransactionId getDistributedTransactionId(void);
+extern DistributedTransactionTimeStamp getDistributedTransactionTimestamp(void);
 extern bool getDistributedTransactionIdentifier(char *id);
 
 extern void resetGxact(void);
@@ -331,7 +313,7 @@ extern bool dispatchDtxCommand(const char *cmd);
 extern void tmShmemInit(void);
 extern int	tmShmemSize(void);
 
-extern void verify_shared_snapshot_ready(void);
+extern void verify_shared_snapshot_ready(int cid);
 
 int			mppTxnOptions(bool needTwoPhase);
 int			mppTxOptions_IsoLevel(int txnOptions);
@@ -362,7 +344,6 @@ extern bool currentGxactWriterGangLost(void);
 
 extern void addToGxactTwophaseSegments(struct Gang* gp);
 
-extern DistributedTransactionId generateGID(void);
 extern void ClearTransactionState(TransactionId latestXid);
 
 extern void DtxRecoveryMain(Datum main_arg);

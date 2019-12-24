@@ -13,7 +13,7 @@
  *
  * Portions Copyright (c) 2005-2010, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -92,9 +92,6 @@ ExecSubPlan(SubPlanState *node,
 	if (subplan->setParam != NIL && subplan->subLinkType != MULTIEXPR_SUBLINK)
 		elog(ERROR, "cannot set parent params from subquery");
 
-	/* Remember that we're recursing into a sub-plan */
-	node->planstate->state->currentSubplanLevel++;
-
 	/* Force forward-scan mode for evaluation */
 	estate->es_direction = ForwardScanDirection;
 
@@ -106,8 +103,6 @@ ExecSubPlan(SubPlanState *node,
 
 	/* restore scan direction */
 	estate->es_direction = dir;
-
-	node->planstate->state->currentSubplanLevel--;
 
 	return retval;
 }
@@ -1025,8 +1020,6 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext, QueryDesc *queryDesc
 		queryDesc && queryDesc->plannedstmt->subplan_initPlanParallel[subplan->plan_id])
 		shouldDispatch = true;
 
-	planstate->state->currentSubplanLevel++;
-
 	/*
 	 * Reset memory high-water mark so EXPLAIN ANALYZE can report each
 	 * root slice's usage separately.
@@ -1060,22 +1053,6 @@ PG_TRY();
 		Assert((queryDesc->estate->interconnect_context));
 
 		UpdateMotionExpectedReceivers(queryDesc->estate->motionlayer_context, queryDesc->estate->es_sliceTable);
-
-		ExecUpdateTransportState(planstate, queryDesc->estate->interconnect_context);
-
-		/*
-		 * MPP-7504/MPP-7448: the pre-dispatch function evaluator
-		 * may mess up our snapshot-sync mechanism. So we've
-		 * called verify_shared_snapshot() down in the dispatcher.
-		 */
-		if (queryDesc->extended_query)
-		{
-			/*
-			 * We rewind the segmateSync value since the InitPlan can
-			 * share the same value with its parent plan. See MPP-4504.
-			 */
-			DtxContextInfo_RewindSegmateSync();
-		}
 	}
 	ArrayBuildStateAny *astate = NULL;
 
@@ -1342,8 +1319,6 @@ PG_CATCH();
 	PG_RE_THROW();
 }
 PG_END_TRY();
-
-	planstate->state->currentSubplanLevel--;
 
 	/* If EXPLAIN ANALYZE, collect local execution stats. */
 	if (Gp_role == GP_ROLE_DISPATCH && planstate->instrument && planstate->instrument->need_cdb)

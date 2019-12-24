@@ -23,6 +23,7 @@
 #include "cdb/cdbtm.h"
 #include "libpq/libpq-be.h"
 #include "miscadmin.h"
+#include "storage/s_lock.h"
 #include "storage/shmem.h"
 #include "storage/ipc.h"
 #include "cdb/cdbdisp.h"
@@ -48,9 +49,27 @@
 #include "utils/faultinjector.h"
 #include "utils/guc.h"
 #include "utils/fmgroids.h"
+#include "utils/session_state.h"
 #include "utils/sharedsnapshot.h"
 #include "utils/snapmgr.h"
 #include "utils/memutils.h"
+
+typedef struct TmControlBlock
+{
+	DistributedTransactionTimeStamp	distribTimeStamp;
+	DistributedTransactionId	seqno;
+	bool						DtmStarted;
+	uint32						NextSnapshotId;
+	int							num_committed_xacts;
+	slock_t						gxidGenLock;
+
+	/* Array [0..max_tm_gxacts-1] of TMGXACT_LOG ptrs is appended starting here */
+	TMGXACT_LOG  			    committed_gxact_array[1];
+}	TmControlBlock;
+
+
+#define TMCONTROLBLOCK_BYTES(num_gxacts) \
+	(offsetof(TmControlBlock, committed_gxact_array) + sizeof(TMGXACT_LOG) * (num_gxacts))
 
 extern bool Test_print_direct_dispatch_info;
 
@@ -60,12 +79,14 @@ volatile DistributedTransactionTimeStamp *shmDistribTimeStamp;
 volatile DistributedTransactionId *shmGIDSeq;
 
 uint32 *shmNextSnapshotId;
+slock_t *shmGxidGenLock;
 
 int	max_tm_gxacts = 100;
 
 
 #define TM_ERRDETAIL (errdetail("gid=%u-%.10u, state=%s", \
-		MyTmGxact->distribTimeStamp, MyTmGxact->gxid, DtxStateToString(MyTmGxactLocal->state)))
+		getDistributedTransactionTimestamp(), getDistributedTransactionId(),\
+		DtxStateToString(MyTmGxactLocal ? MyTmGxactLocal->state : 0)))
 /* here are some flag options relationed to the txnOptions field of
  * PQsendGpQuery
  */
@@ -95,7 +116,6 @@ static void doPrepareTransaction(void);
 static void doInsertForgetCommitted(void);
 static void doNotifyingOnePhaseCommit(void);
 static void doNotifyingCommitPrepared(void);
-static void doNotifyingCommitNotPrepared(void);
 static void doNotifyingAbort(void);
 static void retryAbortPrepared(void);
 static void doQEDistributedExplicitBegin();
@@ -184,43 +204,35 @@ getDtxStartTime(void)
 DistributedTransactionId
 getDistributedTransactionId(void)
 {
-	if (isQDContext())
-	{
-		return GetCurrentDistributedTransactionId();
-	}
-	else if (isQEContext())
-	{
-		return QEDtxContextInfo.distributedXid;
-	}
+	if (isQDContext() || isQEContext())
+		return MyTmGxact->gxid;
 	else
-	{
 		return InvalidDistributedTransactionId;
-	}
+}
+
+DistributedTransactionTimeStamp
+getDistributedTransactionTimestamp(void)
+{
+	if (isQDContext() || isQEContext())
+		return MyTmGxact->distribTimeStamp;
+	else
+		return 0;
 }
 
 bool
 getDistributedTransactionIdentifier(char *id)
 {
-	if (isQDContext())
+	Assert(MyTmGxactLocal != NULL);
+
+	if ((isQDContext() || isQEContext()) &&
+		MyTmGxact->gxid != InvalidDistributedTransactionId)
 	{
-		DistributedTransactionId gxid = GetCurrentDistributedTransactionId();
-		if (gxid != InvalidDistributedTransactionId)
-		{
-			/*
-			 * The length check here requires the identifer have a trailing
-			 * NUL character.
-			 */
-			dtxFormGID(id, getDtxStartTime(), gxid);
-			return true;
-		}
-	}
-	else if (isQEContext())
-	{
-		if (QEDtxContextInfo.distributedXid != InvalidDistributedTransactionId)
-		{
-			dtxFormGID(id, QEDtxContextInfo.distributedTimeStamp, QEDtxContextInfo.distributedXid);
-			return true;
-		}
+		/*
+		 * The length check here requires the identifer have a trailing
+		 * NUL character.
+		 */
+		dtxFormGID(id, MyTmGxact->distribTimeStamp, MyTmGxact->gxid);
+		return true;
 	}
 
 	MemSet(id, 0, TMGIDSIZE);
@@ -250,28 +262,40 @@ isCurrentDtxTwoPhaseActivated(void)
 static void
 currentDtxActivateTwoPhase(void)
 {
-	DistributedTransactionId gxid;
+	/*
+	 * Bump 'shmGIDSeq' and assign it to 'MyTmGxact->gxid', this needs to be atomic.
+	 * Otherwise, another transaction might start and commit in between, which will
+	 * bump 'ShmemVariableCache->latestCompletedDxid'.  If someone else take a
+	 * snapshot now, it will consider this transaction has finished: it's not
+	 * in-progress (MyTmGxact->gxid is not set) and its transaction precedes the xmax.
+	 *
+	 * For example:
+	 * tx1: insert into t values(1), (2);
+	 * tx2: insert into t values(3), (4);
+	 * tx3: select * from t;
+	 *
+	 * It happens in the following order:
+	 * 1. tx1 generates a distributed transaction-id X1
+	 * 2. tx2 generates a distributed transaction-id X2 (X1 < X2)
+	 * 3. tx2 finished
+	 * 4. tx3 takes a distributed snapshot
+	 * 5. tx1 set 'TMGXACT->gxid'
+	 * 6. tx1 finish 'commit prepared' on segment 0 but not on segment 1 yet.
+	 * 7. tx3 will see the change of tx1 on segment 0 but not on segment 1, that's
+	 * because tx1 is considered finished according to the snapshot.
+	 */
+	SpinLockAcquire(shmGxidGenLock);
+	MyTmGxact->gxid = ++(*shmGIDSeq);
+	SpinLockRelease(shmGxidGenLock);
 
-	gxid = GetCurrentDistributedTransactionId();
-	if (gxid == InvalidDistributedTransactionId)
-	{
-		gxid = generateGID();
-		SetCurrentDistributedTransactionId(gxid);
-		Assert(gxid != InvalidDistributedTransactionId);
-	}
+	if (MyTmGxact->gxid == LastDistributedTransactionId)
+		ereport(PANIC,
+				(errmsg("reached the limit of %u global transactions per start",
+						LastDistributedTransactionId)));
 
 	MyTmGxact->distribTimeStamp = getDtxStartTime();
 	MyTmGxact->sessionId = gp_session_id;
 	setCurrentDtxState(DTX_STATE_ACTIVE_DISTRIBUTED);
-
-	/*
-	 * As addressed in access/transam/README, we have to hold ProcArrayLock
-	 * when cleaning MyPgXact->xid as well as MyTmGxact->gxid to make sure
-	 * someone else can take a consistent snapshot at the same time. But it's
-	 * fine to not hold ProcArrayLock when setting xid and gxid, it won't
-	 * affect the correctness of snapshot.
-	 */
-	MyTmGxact->gxid = gxid;
 }
 
 static void
@@ -316,13 +340,20 @@ notifyCommittedDtxTransaction(void)
 	Assert(DistributedTransactionContext == DTX_CONTEXT_QD_DISTRIBUTED_CAPABLE);
 	Assert(isCurrentDtxTwoPhaseActivated());
 
-	if (MyTmGxactLocal->state == DTX_STATE_PREPARED ||
-		MyTmGxactLocal->state == DTX_STATE_INSERTED_COMMITTED)
-		doNotifyingCommitPrepared();
-	else if (MyTmGxactLocal->state == DTX_STATE_ONE_PHASE_COMMIT)
-		doNotifyingOnePhaseCommit();
-	else
-		doNotifyingCommitNotPrepared();
+	switch(MyTmGxactLocal->state)
+	{
+		case DTX_STATE_PREPARED:
+		case DTX_STATE_INSERTED_COMMITTED:
+			doNotifyingCommitPrepared();
+			break;
+		case DTX_STATE_ONE_PHASE_COMMIT:
+			doNotifyingOnePhaseCommit();
+			break;
+		default:
+			ereport(ERROR,
+					(errmsg("Unexpected DTX state"),
+					 TM_ERRDETAIL));
+	}
 }
 
 void
@@ -371,7 +402,7 @@ doDispatchSubtransactionInternalCmd(DtxProtocolCommand cmdType)
 														 mppTxnOptions(true),
 														 "doDispatchSubtransactionInternalCmd");
 
-	dtxFormGID(gid, MyTmGxact->distribTimeStamp, MyTmGxact->gxid);
+	dtxFormGID(gid, getDistributedTransactionTimestamp(), getDistributedTransactionId());
 	succeeded = doDispatchDtxProtocolCommand(cmdType,
 											 gid,
 											 NULL, /* raiseError */ true,
@@ -451,13 +482,13 @@ doInsertForgetCommitted(void)
 
 	setCurrentDtxState(DTX_STATE_INSERTING_FORGET_COMMITTED);
 
-	dtxFormGID(gxact_log.gid, MyTmGxact->distribTimeStamp, MyTmGxact->gxid);
-	gxact_log.gxid = MyTmGxact->gxid;
+	dtxFormGID(gxact_log.gid, getDistributedTransactionTimestamp(), getDistributedTransactionId());
+	gxact_log.gxid = getDistributedTransactionId();
 
 	RecordDistributedForgetCommitted(&gxact_log);
 
 	setCurrentDtxState(DTX_STATE_INSERTED_FORGET_COMMITTED);
-	MyTmGxact->needIncludedInCkpt = false;
+	MyTmGxact->includeInCkpt = false;
 }
 
 void
@@ -500,48 +531,13 @@ ClearTransactionState(TransactionId latestXid)
 }
 
 static void
-doNotifyingCommitNotPrepared(void)
-{
-	bool		succeeded;
-	volatile int savedInterruptHoldoffCount;
-	MemoryContext oldcontext = CurrentMemoryContext;;
-
-	if (MyTmGxactLocal->twophaseSegments == NULL)
-		return;
-
-	savedInterruptHoldoffCount = InterruptHoldoffCount;
-
-	PG_TRY();
-	{
-		succeeded = currentDtxDispatchProtocolCommand(DTX_PROTOCOL_COMMAND_COMMIT_NOT_PREPARED, true);
-	}
-	PG_CATCH();
-	{
-		/*
-		 * restore the previous value, which is reset to 0 in errfinish.
-		 */
-		MemoryContextSwitchTo(oldcontext);
-		InterruptHoldoffCount = savedInterruptHoldoffCount;
-		succeeded = false;
-		FlushErrorState();
-	}
-	PG_END_TRY();
-
-	if (!succeeded)
-	{
-		ereport(LOG, (errmsg("failed to commit explict read-only transaction, destroy the writer gang")));
-		DisconnectAndDestroyAllGangs(true);
-		CheckForResetSession();
-	}
-}
-
-static void
 doNotifyingOnePhaseCommit(void)
 {
 	bool		succeeded;
 	volatile int savedInterruptHoldoffCount;
 
-	Assert(list_length(MyTmGxactLocal->twophaseSegments) <= 1);
+	if (MyTmGxactLocal->twophaseSegments == NULL)
+		return;
 
 	elog(DTM_DEBUG5, "doNotifyingOnePhaseCommit entering in state = %s", DtxStateToString(MyTmGxactLocal->state));
 
@@ -574,6 +570,14 @@ doNotifyingCommitPrepared(void)
 	setCurrentDtxState(DTX_STATE_NOTIFYING_COMMIT_PREPARED);
 
 	SIMPLE_FAULT_INJECTOR("dtm_broadcast_commit_prepared");
+
+	/*
+	 * Acquire TwophaseCommitLock in shared mode to block any GPDB restore
+	 * points from being created while commit prepared messages are being
+	 * broadcasted.
+	 */
+	LWLockAcquire(TwophaseCommitLock, LW_SHARED);
+
 	savedInterruptHoldoffCount = InterruptHoldoffCount;
 
 	Assert(MyTmGxactLocal->twophaseSegments != NIL);
@@ -661,6 +665,13 @@ doNotifyingCommitPrepared(void)
 			TM_ERRDETAIL));
 
 	doInsertForgetCommitted();
+
+	/*
+	 * We release the TwophaseCommitLock only after writing our distributed
+	 * forget record which signifies that all query executors have written
+	 * their commit prepared records.
+	 */
+	LWLockRelease(TwophaseCommitLock);
 }
 
 static void
@@ -862,19 +873,17 @@ prepareDtxTransaction(void)
 	{
 		elog(DTM_DEBUG5, "prepareDtxTransaction nothing to do (DistributedTransactionContext = '%s')",
 			 DtxContextToString(DistributedTransactionContext));
+		Assert(Gp_role != GP_ROLE_DISPATCH || MyTmGxact->gxid == InvalidDistributedTransactionId);
 		return;
 	}
 
 	if (!isCurrentDtxTwoPhaseActivated())
 	{
-		Assert(MyTmGxact->gxid == InvalidDistributedTransactionId);
 		Assert(MyTmGxactLocal->state == DTX_STATE_NONE);
+		Assert(Gp_role != GP_ROLE_DISPATCH || MyTmGxact->gxid == InvalidDistributedTransactionId);
 		resetGxact();
 		return;
 	}
-
-	if (!ExecutorDidWriteXLog())
-		return;
 
 	/*
 	 * If only one segment was involved in the transaction, and no local XID
@@ -882,7 +891,8 @@ prepareDtxTransaction(void)
 	 * on that one segment. Otherwise, broadcast PREPARE TRANSACTION to the
 	 * segments.
 	 */
-	if (!markXidCommitted && list_length(MyTmGxactLocal->twophaseSegments) < 2)
+	if (!ExecutorDidWriteXLog() ||
+	    (!markXidCommitted && list_length(MyTmGxactLocal->twophaseSegments) < 2))
 	{
 		setCurrentDtxState(DTX_STATE_ONE_PHASE_COMMIT);
 		return;
@@ -1100,10 +1110,12 @@ tmShmemInit(void)
 
 		*shmGIDSeq = FirstDistributedTransactionId;
 		ShmemVariableCache->latestCompletedDxid = InvalidDistributedTransactionId;
+		SpinLockInit(&shared->gxidGenLock);
 	}
 	shmDtmStarted = &shared->DtmStarted;
 	shmNextSnapshotId = &shared->NextSnapshotId;
 	shmNumCommittedGxacts = &shared->num_committed_xacts;
+	shmGxidGenLock = &shared->gxidGenLock;
 	shmCommittedGxactArray = &shared->committed_gxact_array[0];
 
 	if (!IsUnderPostmaster)
@@ -1203,7 +1215,7 @@ currentDtxDispatchProtocolCommand(DtxProtocolCommand dtxProtocolCommand, bool ra
 	char gid[TMGIDSIZE];
 	bool *badgang = (MyTmGxactLocal->state == DTX_STATE_PREPARING) ? &MyTmGxactLocal->badPrepareGangs : NULL;
 
-	dtxFormGID(gid, MyTmGxact->distribTimeStamp, MyTmGxact->gxid);
+	dtxFormGID(gid, getDistributedTransactionTimestamp(), getDistributedTransactionId());
 	return doDispatchDtxProtocolCommand(dtxProtocolCommand, gid, badgang, raiseError,
 										MyTmGxactLocal->twophaseSegments, NULL, 0);
 }
@@ -1225,10 +1237,7 @@ doDispatchDtxProtocolCommand(DtxProtocolCommand dtxProtocolCommand,
 	struct pg_result **results;
 
 	if (!twophaseSegments)
-	{
-		Assert(dtxProtocolCommand == DTX_PROTOCOL_COMMAND_COMMIT_NOT_PREPARED);
 		return true;
-	}
 
 	dtxProtocolCommandStr = DtxProtocolCommandToString(dtxProtocolCommand);
 
@@ -1258,7 +1267,10 @@ doDispatchDtxProtocolCommand(DtxProtocolCommand dtxProtocolCommand,
 					 errdetail("QE reported error: %s", qeError->message)));
 		}
 		else
+		{
+			FlushErrorState();
 			ReThrowError(qeError);
+		}
 		return false;
 	}
 
@@ -1382,18 +1394,12 @@ dispatchDtxCommand(const char *cmd)
 void
 resetGxact()
 {
-	if (Gp_role == GP_ROLE_DISPATCH && MyTmGxact->gxid != InvalidDistributedTransactionId)
-	{
-		/* As QE doesn't take distributed snapshot, we don't have to hold ProcArrayLock to clear gxid */
-		Assert(LWLockHeldByMe(ProcArrayLock));
-		MyTmGxact->gxid = InvalidDistributedTransactionId;
-	}
-	else if (Gp_role == GP_ROLE_EXECUTE)
-		MyTmGxact->gxid = InvalidDistributedTransactionId;
-
+	AssertImply(Gp_role == GP_ROLE_DISPATCH && MyTmGxact->gxid != InvalidDistributedTransactionId,
+				LWLockHeldByMe(ProcArrayLock));
+	MyTmGxact->gxid = InvalidDistributedTransactionId;
 	MyTmGxact->distribTimeStamp = 0;
 	MyTmGxact->xminDistributedSnapshot = InvalidDistributedTransactionId;
-	MyTmGxact->needIncludedInCkpt = false;
+	MyTmGxact->includeInCkpt = false;
 	MyTmGxact->sessionId = 0;
 
 	MyTmGxactLocal->explicitBeginRemembered = false;
@@ -1463,22 +1469,7 @@ insertedDistributedCommitted(void)
 	 */
 	Assert(MyPgXact->delayChkpt);
 	if (IS_QUERY_DISPATCHER())
-		MyTmGxact->needIncludedInCkpt = true;
-}
-
-/* generate global transaction id */
-DistributedTransactionId
-generateGID(void)
-{
-	DistributedTransactionId gxid;
-
-	gxid = pg_atomic_add_fetch_u32((pg_atomic_uint32*)shmGIDSeq, 1);
-	if (gxid == LastDistributedTransactionId)
-		ereport(PANIC,
-				(errmsg("reached the limit of %u global transactions per start",
-						LastDistributedTransactionId)));
-
-	return gxid;
+		MyTmGxact->includeInCkpt = true;
 }
 
 /*
@@ -1495,24 +1486,27 @@ generateGID(void)
  * information.
  */
 void
-verify_shared_snapshot_ready(void)
+verify_shared_snapshot_ready(int cid)
 {
-	if (Gp_role == GP_ROLE_DISPATCH)
-	{
-		CdbDispatchCommand("set gp_write_shared_snapshot=true",
-						   DF_CANCEL_ON_ERROR |
-						   DF_WITH_SNAPSHOT |
-						   DF_NEED_TWO_PHASE,
-						   NULL);
+	Assert (Gp_role == GP_ROLE_DISPATCH);
 
-		dumpSharedLocalSnapshot_forCursor();
+	/*
+	 * A cursor/bind/exec command may trigger multiple dispatchs (e.g.
+	 *    DECLARE s1 CURSOR FOR SELECT * FROM test WHERE a=(SELECT max(b) FROM test))
+	 * and all the dispatchs target to the reader gangs only. Since all the dispatchs
+	 * are read-only and happens in one user command, it's ok to share one same snapshot.
+	 */
+	if (MySessionState->latestCursorCommandId == cid)
+		return;
 
-		/*
-		 * To keep our readers in sync (since they will be dispatched
-		 * separately) we need to rewind the segmate synchronizer.
-		 */
-		DtxContextInfo_RewindSegmateSync();
-	}
+	CdbDispatchCommand("set gp_write_shared_snapshot=true",
+					   DF_CANCEL_ON_ERROR |
+					   DF_WITH_SNAPSHOT |
+					   DF_NEED_TWO_PHASE,
+					   NULL);
+
+	dumpSharedLocalSnapshot_forCursor();
+	MySessionState->latestCursorCommandId = cid;
 }
 
 /*
@@ -1707,15 +1701,14 @@ setupQEDtxContext(DtxContextInfo *dtxContextInfo)
 				LWLockAcquire(SharedLocalSnapshotSlot->slotLock, LW_SHARED);
 				elog(DTM_DEBUG5,
 					 "setupQEDtxContext inputs (part 2b):  shared local snapshot xid = %u "
-					 "(xmin: %u xmax: %u xcnt: %u) curcid: %d, QDxid = %u/%u, QDcid = %u",
+					 "(xmin: %u xmax: %u xcnt: %u) curcid: %d, QDxid = %u/%u",
 					 SharedLocalSnapshotSlot->xid,
 					 SharedLocalSnapshotSlot->snapshot.xmin,
 					 SharedLocalSnapshotSlot->snapshot.xmax,
 					 SharedLocalSnapshotSlot->snapshot.xcnt,
 					 SharedLocalSnapshotSlot->snapshot.curcid,
 					 SharedLocalSnapshotSlot->QDxid,
-					 SharedLocalSnapshotSlot->segmateSync,
-					 SharedLocalSnapshotSlot->QDcid);
+					 SharedLocalSnapshotSlot->segmateSync);
 				LWLockRelease(SharedLocalSnapshotSlot->slotLock);
 			}
 		}
@@ -2018,11 +2011,14 @@ performDtxProtocolPrepare(const char *gid)
 static void
 performDtxProtocolCommitOnePhase(const char *gid)
 {
+	DistributedTransactionTimeStamp distribTimeStamp;
+	DistributedTransactionId gxid;
 	elog(DTM_DEBUG5,
 		 "performDtxProtocolCommitOnePhase going to call CommitTransaction for distributed transaction %s", gid);
 
-	/* MyTmGxact is now not used on QE for one-phase commit */
-	dtxCrackOpenGid(gid, &MyTmGxact->distribTimeStamp, &MyTmGxact->gxid);
+	dtxCrackOpenGid(gid, &distribTimeStamp, &gxid);
+	Assert(gxid == getDistributedTransactionId());
+	Assert(distribTimeStamp == getDistributedTransactionTimestamp());
 	MyTmGxactLocal->isOnePhaseCommit = true;
 
 	StartTransactionCommand();
@@ -2041,11 +2037,13 @@ performDtxProtocolCommitOnePhase(const char *gid)
 }
 
 /**
- * On the QD, run the Commit Prepared operation.
+ * On the QE, run the Commit Prepared operation.
  */
 static void
 performDtxProtocolCommitPrepared(const char *gid, bool raiseErrorIfNotFound)
 {
+	Assert(Gp_role == GP_ROLE_EXECUTE);
+
 	elog(DTM_DEBUG5,
 		 "performDtxProtocolCommitPrepared going to call FinishPreparedTransaction for distributed transaction %s", gid);
 
@@ -2075,11 +2073,13 @@ performDtxProtocolCommitPrepared(const char *gid, bool raiseErrorIfNotFound)
 }
 
 /**
- * On the QD, run the Abort Prepared operation.
+ * On the QE, run the Abort Prepared operation.
  */
 static void
 performDtxProtocolAbortPrepared(const char *gid, bool raiseErrorIfNotFound)
 {
+	Assert(Gp_role == GP_ROLE_EXECUTE);
+
 	elog(DTM_DEBUG5, "performDtxProtocolAbortPrepared going to call FinishPreparedTransaction for distributed transaction %s", gid);
 
 	StartTransactionCommand();
@@ -2093,7 +2093,7 @@ performDtxProtocolAbortPrepared(const char *gid, bool raiseErrorIfNotFound)
 	}
 	PG_CATCH();
 	{
-		finishDistributedTransactionContext("performDtxProtocolAbortPrepared -- Commit Prepared (error case)", true);
+		finishDistributedTransactionContext("performDtxProtocolAbortPrepared -- Abort Prepared (error case)", true);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -2104,7 +2104,7 @@ performDtxProtocolAbortPrepared(const char *gid, bool raiseErrorIfNotFound)
 	 */
 	CommitTransactionCommand();
 
-	finishDistributedTransactionContext("performDtxProtocolAbortPrepared -- Commit Prepared", true);
+	finishDistributedTransactionContext("performDtxProtocolAbortPrepared -- Abort Prepared", true);
 }
 
 /**
@@ -2214,12 +2214,6 @@ performDtxProtocolCommand(DtxProtocolCommand dtxProtocolCommand,
 			requireDistributedTransactionContext(DTX_CONTEXT_QE_PREPARED);
 			setDistributedTransactionContext(DTX_CONTEXT_QE_FINISH_PREPARED);
 			performDtxProtocolCommitPrepared(gid, /* raiseErrorIfNotFound */ true);
-			break;
-
-		case DTX_PROTOCOL_COMMAND_COMMIT_NOT_PREPARED:
-			Assert(DistributedTransactionContext == DTX_CONTEXT_QE_TWO_PHASE_EXPLICIT_WRITER ||
-				   DistributedTransactionContext == DTX_CONTEXT_QE_TWO_PHASE_IMPLICIT_WRITER);
-			CommitNotPreparedTransaction();
 			break;
 
 		case DTX_PROTOCOL_COMMAND_ABORT_PREPARED:

@@ -192,12 +192,6 @@ namespace gpdxl
 			// Set the bitmapset of a plan to the list of param_ids defined by the plan
 			void SetParamIds(Plan *);
 
-			// Set the qDispSliceId in the subplans defining an initplan
-			void SetInitPlanSliceInformation(PlannedStmt *, SubPlan *);
-
-			// Set InitPlanVariable in PlannedStmt
-			void SetInitPlanVariables(PlannedStmt *);
-
 			// translate DXL table scan node into a SeqScan node
 			Plan *TranslateDXLTblScan
 				(
@@ -620,13 +614,13 @@ namespace gpdxl
 			// check if the given operator is a DML operator on a distributed table
 			BOOL IsTgtTblDistributed(CDXLOperator *dxlop);
 
-			// add a target entry for the given colid to the given target list
-			ULONG AddTargetEntryForColId
+			// add a target entry for a junk column with given colid to the target list
+			void AddJunkTargetEntryForColId
 				(
 				List **target_list, 
 				CDXLTranslateContext *dxl_translate_ctxt, 
 				ULONG colid, 
-				BOOL is_resjunk
+				const char *resname
 				);
 			
 			// translate the index condition list in an Index scan
@@ -635,6 +629,7 @@ namespace gpdxl
 				CDXLNode *index_cond_list_dxlnode,
 				const CDXLTableDescr *dxl_tbl_descr,
 				BOOL is_index_only_scan,
+				BOOL is_bitmap_index_probe,
 				const IMDIndex *index,
 				const IMDRelation *md_rel,
 				CDXLTranslateContext *output_context,

@@ -132,6 +132,7 @@ bool		Debug_appendonly_print_compaction = false;
 bool		Debug_resource_group = false;
 bool		Debug_bitmap_print_insert = false;
 bool		Test_print_direct_dispatch_info = false;
+bool		Test_copy_qd_qe_split = false;
 bool		gp_permit_relation_node_change = false;
 int			gp_max_local_distributed_cache = 1024;
 bool		gp_appendonly_verify_block_checksums = true;
@@ -437,7 +438,6 @@ bool		gp_external_enable_filter_pushdown = true;
 
 /* Executor */
 bool		gp_enable_mk_sort = true;
-bool		gp_enable_motion_mk_sort = true;
 
 /* Enable GDD */
 bool		gp_enable_global_deadlock_detector = false;
@@ -455,7 +455,6 @@ static const struct config_enum_entry debug_dtm_action_protocol_options[] = {
 	{"abort_some_prepared", DTX_PROTOCOL_COMMAND_ABORT_SOME_PREPARED},
 	{"commit_onephase", DTX_PROTOCOL_COMMAND_COMMIT_ONEPHASE},
 	{"commit_prepared", DTX_PROTOCOL_COMMAND_COMMIT_PREPARED},
-	{"commit_not_prepared", DTX_PROTOCOL_COMMAND_COMMIT_NOT_PREPARED},
 	{"abort_prepared", DTX_PROTOCOL_COMMAND_ABORT_PREPARED},
 	{"retry_commit_prepared", DTX_PROTOCOL_COMMAND_RETRY_COMMIT_PREPARED},
 	{"retry_abort_prepared", DTX_PROTOCOL_COMMAND_RETRY_ABORT_PREPARED},
@@ -774,6 +773,7 @@ struct config_bool ConfigureNamesBool_gp[] =
 		NULL, NULL, NULL
 	},
 
+	/* GPDB_96_MERGE_FIXME: This doesn't do anything anymore. Do we need to resurrect it? How? */
 	{
 		{"gp_eager_one_phase_agg", PGC_USERSET, DEVELOPER_OPTIONS,
 			gettext_noop("Prefer 1-phase aggregation."),
@@ -837,18 +837,6 @@ struct config_bool ConfigureNamesBool_gp[] =
 
 		},
 		&gp_enable_mk_sort,
-		true,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"gp_enable_motion_mk_sort", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Enable multi-key sort in sorted motion recv."),
-			gettext_noop("A faster sort for recv motion"),
-			GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE
-
-		},
-		&gp_enable_motion_mk_sort,
 		true,
 		NULL, NULL, NULL
 	},
@@ -1519,6 +1507,17 @@ struct config_bool ConfigureNamesBool_gp[] =
 	},
 
 	{
+		{"test_copy_qd_qe_split", PGC_SUSET, DEVELOPER_OPTIONS,
+			gettext_noop("For testing purposes, print information about which columns are parsed in QD and which in QE."),
+			NULL,
+			GUC_SUPERUSER_ONLY | GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE
+		},
+		&Test_copy_qd_qe_split,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"debug_bitmap_print_insert", PGC_SUSET, DEVELOPER_OPTIONS,
 			gettext_noop("Print log messages for bitmap index insert routines (caution-- generate a lot of logs!)"),
 			NULL,
@@ -1615,7 +1614,7 @@ struct config_bool ConfigureNamesBool_gp[] =
 			NULL
 		},
 		&gp_statistics_use_fkeys,
-		true,
+		false,
 		NULL, NULL, NULL
 	},
 	{
@@ -4762,8 +4761,9 @@ void gpdb_assign_sync_flag(struct config_generic **guc_variables, int size, bool
 			{
 				ereport(ERROR,
 				        (errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("predefined guc name: %s contain neither "
-						 "sync_guc_names_array nor unsync_guc_names_array", var->name)));
+						 errmsg("Neither sync_guc_names_array nor "
+								"unsync_guc_names_array contains predefined "
+								"guc name: %s", var->name)));
 			}
 
 			var->flags |= GUC_GPDB_NO_SYNC;

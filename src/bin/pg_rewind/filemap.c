@@ -3,7 +3,7 @@
  * filemap.c
  *	  A data structure for keeping track of files that have changed.
  *
- * Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -174,6 +174,14 @@ process_source_file(const char *path, file_type_t type, size_t newsize,
 	/*
 	 * Pretend that pg_xlog is a directory, even if it's really a symlink.
 	 * We don't want to mess with the symlink itself, nor complain if it's a
+	 * symlink in source but not in target or vice versa.
+	 */
+	if (strcmp(path, "pg_xlog") == 0 && type == FILE_TYPE_SYMLINK)
+		type = FILE_TYPE_DIRECTORY;
+
+	/*
+	 * Pretend that pg_xlog is a directory, even if it's really a symlink. We
+	 * don't want to mess with the symlink itself, nor complain if it's a
 	 * symlink in source but not in target or vice versa.
 	 */
 	if (strcmp(path, "pg_xlog") == 0 && type == FILE_TYPE_SYMLINK)
@@ -401,6 +409,12 @@ process_target_file(const char *path, file_type_t type, size_t oldsize,
 	if (strcmp(path, "pg_xlog") == 0 && type == FILE_TYPE_SYMLINK)
 		type = FILE_TYPE_DIRECTORY;
 
+	/*
+	 * Like in process_source_file, pretend that xlog is always a  directory.
+	 */
+	if (strcmp(path, "pg_xlog") == 0 && type == FILE_TYPE_SYMLINK)
+		type = FILE_TYPE_DIRECTORY;
+
 	key.path = (char *) path;
 	key_ptr = &key;
 	exists = (bsearch(&key_ptr, map->array, map->narray, sizeof(file_entry_t *),
@@ -580,13 +594,13 @@ process_aofile_change(RelFileNode rnode, int segno, int64 offset)
 			case FILE_ACTION_CREATE:
 				pg_fatal("unexpected AO file modification for directory or symbolic link \"%s\"\n", entry->path);
 		}
+
+		pg_log(PG_DEBUG, "Entry for path %s has action %d\n", entry->path, entry->action);
 	}
 	else
 	{
 		/* Similar to process_block_change(), the absence of the file entry is not an error */
 	}
-
-	pg_log(PG_DEBUG, "Entry for path %s has action %d\n", entry->path, entry->action);
 }
 
 /*
@@ -753,7 +767,11 @@ print_filemap(void)
 		if (entry->action != FILE_ACTION_NONE ||
 			entry->pagemap.bitmapsize > 0)
 		{
-			printf("%s (%s)\n", entry->path, action_to_str(entry->action));
+			pg_log(PG_DEBUG,
+			/*------
+			   translator: first %s is a file path, second is a keyword such as COPY */
+				   "%s (%s)\n", entry->path,
+				   action_to_str(entry->action));
 
 			if (entry->pagemap.bitmapsize > 0)
 				datapagemap_print(&entry->pagemap);

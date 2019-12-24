@@ -19,7 +19,7 @@ explain select * from nhtest a join nhtest b using (i);
 -----------------------------------------------------------------------------------
  Gather Motion 3:1  (slice1; segments: 3)  (cost=0.00..862.00 rows=1 width=9)
    ->  Hash Join  (cost=0.00..862.00 rows=1 width=9)
-         Hash Cond: nhtest.i = nhtest_1.i
+         Hash Cond: (nhtest.i = nhtest_1.i)
          ->  Seq Scan on nhtest  (cost=0.00..431.00 rows=1 width=9)
          ->  Hash  (cost=431.00..431.00 rows=1 width=9)
                ->  Seq Scan on nhtest nhtest_1  (cost=0.00..431.00 rows=1 width=9)
@@ -133,10 +133,10 @@ explain select * from t1,t2 where t1.x = 100 and t2.x >= t1.x;
 ----------------------------------------------------------------------------------------------
  Gather Motion 3:1  (slice2; segments: 3)  (cost=0.00..1324039.56 rows=34 width=24)
    ->  Nested Loop  (cost=0.00..1324039.56 rows=12 width=24)
-         Join Filter: t2.x >= t1.x
+         Join Filter: (t2.x >= t1.x)
          ->  Broadcast Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.00 rows=1 width=12)
                ->  Seq Scan on t1  (cost=0.00..431.00 rows=1 width=12)
-                     Filter: x = 100
+                     Filter: (x = 100)
          ->  Seq Scan on t2  (cost=0.00..431.00 rows=34 width=12)
  Settings:  optimizer=on
  Optimizer status: Pivotal Optimizer (GPORCA) version 2.39.2
@@ -317,14 +317,12 @@ create table bar (c int, d int) distributed randomly;
 insert into foo select generate_series(1,10);
 insert into bar select generate_series(1,10);
 explain select a from foo where a<1 and a>1 and not exists (select c from bar where c=a);
-                   QUERY PLAN                   
-------------------------------------------------
+                      QUERY PLAN                      
+------------------------------------------------------
  Result  (cost=0.00..0.00 rows=0 width=4)
-   ->  Result  (cost=0.00..0.00 rows=0 width=4)
-         One-Time Filter: false
- Settings:  optimizer=on
- Optimizer status: Pivotal Optimizer (GPORCA) version 2.39.2
-(5 rows)
+   One-Time Filter: false
+ Optimizer: Pivotal Optimizer (GPORCA) version 3.83.0
+(3 rows)
 
 select a from foo where a<1 and a>1 and not exists (select c from bar where c=a);
  a 
@@ -531,7 +529,7 @@ explain select * from t5370 a , t5370_2 b where a.name=b.name;
 --------------------------------------------------------------------------------------------------------
  Gather Motion 3:1  (slice3; segments: 3)  (cost=0.00..862.25 rows=1000 width=14)
    ->  Hash Join  (cost=0.00..862.20 rows=334 width=14)
-         Hash Cond: t5370.name = t5370_2.name
+         Hash Cond: (t5370.name = t5370_2.name)
          ->  Redistribute Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.02 rows=334 width=7)
                Hash Key: t5370.name
                ->  Seq Scan on t5370  (cost=0.00..431.01 rows=334 width=7)
@@ -822,20 +820,19 @@ set enable_material = 0;
 set enable_seqscan = 0;
 set enable_bitmapscan = 0;
 explain select tenk1.unique2 >= 0 from tenk1 left join tenk2 on true limit 1;
-                                                       QUERY PLAN                                                        
--------------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
  Limit  (cost=0.00..1885517.36 rows=1 width=1)
    ->  Gather Motion 3:1  (slice2; segments: 3)  (cost=0.00..1885517.36 rows=1 width=1)
          ->  Limit  (cost=0.00..1885517.36 rows=1 width=1)
-               ->  Result  (cost=0.00..1885517.36 rows=33336667 width=1)
-                     ->  Nested Loop Left Join  (cost=0.00..1885484.02 rows=33336667 width=4)
-                           Join Filter: true
-                           ->  Seq Scan on tenk1  (cost=0.00..431.51 rows=3334 width=4)
-                           ->  Materialize  (cost=0.00..431.70 rows=10000 width=1)
-                                 ->  Broadcast Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.69 rows=10000 width=1)
-                                       ->  Seq Scan on tenk2  (cost=0.00..431.50 rows=3334 width=1)
- Optimizer: Pivotal Optimizer (GPORCA) version 3.23.0
-(11 rows)
+               ->  Nested Loop Left Join  (cost=0.00..1885484.02 rows=33336667 width=4)
+                     Join Filter: true
+                     ->  Seq Scan on tenk1  (cost=0.00..431.51 rows=3334 width=4)
+                     ->  Materialize  (cost=0.00..431.70 rows=10000 width=1)
+                           ->  Broadcast Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.69 rows=10000 width=1)
+                                 ->  Seq Scan on tenk2  (cost=0.00..431.50 rows=3334 width=1)
+ Optimizer: Pivotal Optimizer (GPORCA) version 3.83.0
+(10 rows)
 
 select tenk1.unique2 >= 0 from tenk1 left join tenk2 on true limit 1;
  ?column? 
@@ -1141,3 +1138,32 @@ explain select * from (t_joinsize_1 join t_joinsize_2 on t_joinsize_1.c2 = t_joi
 drop table t_joinsize_1;
 drop table t_joinsize_2;
 drop table t_joinsize_3;
+-- test if subquery locus is general, then
+-- we should keep it general
+create table t_randomly_dist_table(c int) distributed randomly;
+-- the following plan should not contain redistributed motion (for planner)
+explain
+select * from (
+  select a from generate_series(1, 10)a
+  union all
+  select a from generate_series(1, 10)a
+) t_subquery_general
+join t_randomly_dist_table on t_subquery_general.a = t_randomly_dist_table.c;
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Gather Motion 3:1  (slice2; segments: 3)  (cost=0.00..431.15 rows=1 width=8)
+   ->  Hash Join  (cost=0.00..431.15 rows=1 width=8)
+         Hash Cond: (generate_series.generate_series = t_randomly_dist_table.c)
+         ->  Append  (cost=0.00..0.03 rows=667 width=4)
+               ->  Result  (cost=0.00..0.01 rows=334 width=4)
+                     ->  Function Scan on generate_series  (cost=0.00..0.00 rows=334 width=4)
+               ->  Result  (cost=0.00..0.01 rows=334 width=4)
+                     ->  Function Scan on generate_series generate_series_1  (cost=0.00..0.00 rows=334 width=4)
+         ->  Hash  (cost=431.00..431.00 rows=1 width=4)
+               ->  Redistribute Motion 3:3  (slice1; segments: 3)  (cost=0.00..431.00 rows=1 width=4)
+                     Hash Key: t_randomly_dist_table.c
+                     ->  Seq Scan on t_randomly_dist_table  (cost=0.00..431.00 rows=1 width=4)
+ Optimizer: Pivotal Optimizer (GPORCA) version 3.77.0
+(13 rows)
+
+drop table t_randomly_dist_table;

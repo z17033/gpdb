@@ -3,7 +3,7 @@
  *
  *	options functions
  *
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/option.c
  */
 
@@ -13,6 +13,7 @@
 #include "getopt_long.h"
 
 #include "pg_upgrade.h"
+#include "greenplum/pg_upgrade_greenplum.h"
 
 #include <time.h>
 #include <sys/types.h>
@@ -58,10 +59,7 @@ parseCommandLine(int argc, char *argv[])
 		{"verbose", no_argument, NULL, 'v'},
 
 		/* Greenplum specific parameters */
-		{"mode", required_argument, NULL, 1},
-		{"progress", no_argument, NULL, 2},
-		{"add-checksum", no_argument, NULL, 3},
-		{"remove-checksum", no_argument, NULL, 4},
+		GREENPLUM_OPTIONS
 
 		{NULL, 0, NULL, 0}
 	};
@@ -82,7 +80,7 @@ parseCommandLine(int argc, char *argv[])
 
 	os_user_effective_id = get_user_info(&os_info.user);
 
-	user_opts.segment_mode = SEGMENT;
+	initialize_greenplum_user_options();
 
 	/* we override just the database user name;  we got the OS id above */
 	if (getenv("PGUSER"))
@@ -218,38 +216,10 @@ parseCommandLine(int argc, char *argv[])
 				log_opts.verbose = true;
 				break;
 
-			/*
-			 * Greenplum specific parameters
-			 */
-
-			case 1:		/* --mode={dispatcher|segment} */
-				if (pg_strcasecmp("dispatcher", optarg) == 0)
-					user_opts.segment_mode = DISPATCHER;
-				else if (pg_strcasecmp("segment", optarg) == 0)
-					user_opts.segment_mode = SEGMENT;
-				else
-				{
-					pg_log(PG_FATAL, "invalid segment configuration\n");
-					exit(1);
-				}
-
-				break;
-
-			case 2:		/* --progress */
-				user_opts.progress = true;
-				break;
-
-			case 3:		/* --add-checksum */
-				user_opts.checksum_mode = CHECKSUM_ADD;
-				break;
-
-			case 4:		/* --remove-checksum */
-				user_opts.checksum_mode = CHECKSUM_REMOVE;
-				break;
-
 			default:
-				pg_fatal("Try \"%s --help\" for more information.\n",
-						 os_info.progname);
+				if (!process_greenplum_option(option, pg_strdup(optarg)))
+					pg_fatal("Try \"%s --help\" for more information.\n",
+							 os_info.progname);
 				break;
 		}
 	}
@@ -295,7 +265,7 @@ parseCommandLine(int argc, char *argv[])
 
 	/* Ensure we are only adding checksums in copy mode */
 	if (user_opts.transfer_mode != TRANSFER_MODE_COPY &&
-		user_opts.checksum_mode != CHECKSUM_NONE)
+		!is_checksum_mode(CHECKSUM_NONE))
 		pg_log(PG_FATAL, "Adding and removing checksums only supported in copy mode.\n");
 
 #ifdef WIN32
@@ -345,10 +315,7 @@ Options:\n\
   -U, --username=NAME           cluster superuser (default \"%s\")\n\
   -v, --verbose                 enable verbose internal logging\n\
   -V, --version                 display version information, then exit\n\
-      --mode=TYPE               designate node type to upgrade, \"segment\" or \"dispatcher\" (default \"segment\")\n\
-      --progress                enable progress reporting\n\
-      --remove-checksum         remove data checksums when creating new cluster\n\
-      --add-checksum            add data checksumming to the new cluster\n\
+%s\
   -?, --help                    show this help, then exit\n\
 \n\
 Before running pg_upgrade you must:\n\
@@ -364,7 +331,7 @@ When you run pg_upgrade, you must provide the following information:\n\
 \n\
 For example:\n\
   pg_upgrade -d oldCluster/data -D newCluster/data -b oldCluster/bin -B newCluster/bin\n\
-or\n"), old_cluster.port, new_cluster.port, os_info.user);
+or\n"), old_cluster.port, new_cluster.port, os_info.user, GREENPLUM_USAGE);
 #ifndef WIN32
 	printf(_("\
   $ export PGDATAOLD=oldCluster/data\n\
@@ -432,7 +399,7 @@ check_required_directory(char **dirpath, const char *envVarName, bool useCwd,
  * adjust_data_dir
  *
  * If a configuration-only directory was specified, find the real data dir
- * by quering the running server.  This has limited checking because we
+ * by querying the running server.  This has limited checking because we
  * can't check for a running server because we can't find postmaster.pid.
  *
  * On entry, cluster->pgdata has been set from command line or env variable,

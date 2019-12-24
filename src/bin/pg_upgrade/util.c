@@ -3,7 +3,7 @@
  *
  *	utility functions
  *
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/util.c
  */
 
@@ -14,6 +14,7 @@
 
 #include <signal.h>
 
+#include "greenplum/pg_upgrade_greenplum.h"
 
 LogOpts		log_opts;
 

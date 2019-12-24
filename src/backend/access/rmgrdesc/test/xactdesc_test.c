@@ -25,9 +25,12 @@ test_xactdescprepareCommit(void **state)
 	TwoPhaseFileHeader* tpfh = (TwoPhaseFileHeader*) XLogRecGetData(record);
 
 	tpfh->prepared_at = 617826371830030;
-	strcpy(tpfh->gid, "4242424242-0000000042");
 	tpfh->tablespace_oid_to_delete_on_commit = 42;
 	tpfh->tablespace_oid_to_delete_on_abort = InvalidOid;
+
+	/* Can not use save_state() here, so emulate it */
+	tpfh->gidlen = strlen("4242424242-0000000042") + 1;
+	strcpy((char *)tpfh + sizeof(*tpfh), "4242424242-0000000042");
 
 	xact_desc(buf, record);
 
@@ -47,9 +50,12 @@ test_xactdescprepareAbort(void **state)
 	TwoPhaseFileHeader* tpfh = (TwoPhaseFileHeader*) XLogRecGetData(record);
 
 	tpfh->prepared_at = 617826371830030;
-	strcpy(tpfh->gid, "4242424242-0000000042");
 	tpfh->tablespace_oid_to_delete_on_commit = InvalidOid;
 	tpfh->tablespace_oid_to_delete_on_abort = 42;
+
+	/* Can not use save_state() here, so emulate it */
+	tpfh->gidlen = strlen("4242424242-0000000042") + 1;
+	strcpy((char *)tpfh + sizeof(*tpfh), "4242424242-0000000042");
 
 	xact_desc(buf, record);
 
@@ -69,9 +75,12 @@ test_xactdescprepareNone(void **state)
 	TwoPhaseFileHeader* tpfh = (TwoPhaseFileHeader*) XLogRecGetData(record);
 
 	tpfh->prepared_at = 617826371830030;
-	strcpy(tpfh->gid, "4242424242-0000000042");
 	tpfh->tablespace_oid_to_delete_on_commit = InvalidOid;
 	tpfh->tablespace_oid_to_delete_on_abort = InvalidOid;
+
+	/* Can not use save_state() here, so emulate it */
+	tpfh->gidlen = strlen("4242424242-0000000042") + 1;
+	strcpy((char *)tpfh + sizeof(*tpfh), "4242424242-0000000042");
 
 	xact_desc(buf, record);
 

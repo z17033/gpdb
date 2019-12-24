@@ -15,7 +15,7 @@
 #define CDBDTXCONTEXTINFO_H
 #include "utils/tqual.h"
 
-#define DtxContextInfo_StaticInit {0,InvalidDistributedTransactionId,0,false,false,DistributedSnapshot_StaticInit,0,0}
+#define DtxContextInfo_StaticInit {0,InvalidDistributedTransactionId,false,false,DistributedSnapshot_StaticInit,0,0,0}
 
 typedef struct DtxContextInfo
 {
@@ -23,8 +23,6 @@ typedef struct DtxContextInfo
 	
 	DistributedTransactionId 		distributedXid;
 	
-	CommandId				 		curcid;	/* in my xact, CID < curcid are visible */
-
 	bool							haveDistributedSnapshot;
 	bool							cursorContext;
 	
@@ -34,12 +32,15 @@ typedef struct DtxContextInfo
 
 	uint32							segmateSync;
 	uint32							nestingLevel;
+
+	/* currentCommandId of QD, for debugging only */
+	CommandId				 		curcid;	
 } DtxContextInfo;
 
 extern DtxContextInfo QEDtxContextInfo;	
 
 extern void DtxContextInfo_Reset(DtxContextInfo *dtxContextInfo);
-extern void DtxContextInfo_CreateOnMaster(DtxContextInfo *dtxContextInfo,
+extern void DtxContextInfo_CreateOnMaster(DtxContextInfo *dtxContextInfo, bool inCursor,
 										  int txnOptions, Snapshot snapshot);
 extern int DtxContextInfo_SerializeSize(DtxContextInfo *dtxContextInfo);
 
@@ -49,7 +50,4 @@ extern void DtxContextInfo_Deserialize(const char *serializedDtxContextInfo,
 									   DtxContextInfo *dtxContextInfo);
 
 extern void DtxContextInfo_Copy(DtxContextInfo *target, DtxContextInfo *source);
-
-extern void DtxContextInfo_RewindSegmateSync(void);
-
 #endif   /* CDBDTXCONTEXTINFO_H */

@@ -6,7 +6,7 @@
  *
  * Portions Copyright (c) 2006-2008, Greenplum inc
  * Portions Copyright (c) 2012-Present Pivotal Software, Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/smgr.h
@@ -99,6 +99,8 @@ extern void smgrread(SMgrRelation reln, ForkNumber forknum,
 		 BlockNumber blocknum, char *buffer);
 extern void smgrwrite(SMgrRelation reln, ForkNumber forknum,
 		  BlockNumber blocknum, char *buffer, bool skipFsync);
+extern void smgrwriteback(SMgrRelation reln, ForkNumber forknum,
+			  BlockNumber blocknum, BlockNumber nblocks);
 extern BlockNumber smgrnblocks(SMgrRelation reln, ForkNumber forknum);
 extern void smgrtruncate(SMgrRelation reln, ForkNumber forknum,
 			 BlockNumber nblocks);
@@ -126,6 +128,8 @@ extern void mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 	   char *buffer);
 extern void mdwrite(SMgrRelation reln, ForkNumber forknum,
 		BlockNumber blocknum, char *buffer, bool skipFsync);
+extern void mdwriteback(SMgrRelation reln, ForkNumber forknum,
+			BlockNumber blocknum, BlockNumber nblocks);
 extern BlockNumber mdnblocks(SMgrRelation reln, ForkNumber forknum);
 extern void mdtruncate(SMgrRelation reln, ForkNumber forknum,
 					   BlockNumber nblocks);
@@ -136,7 +140,7 @@ extern void mdpostckpt(void);
 
 extern void SetForwardFsyncRequests(void);
 extern void RememberFsyncRequest(RelFileNode rnode, ForkNumber forknum,
-					 BlockNumber segno);
+					 BlockNumber segno, bool is_ao_segno);
 extern void ForgetRelationFsyncRequests(RelFileNode rnode, ForkNumber forknum);
 extern void ForgetDatabaseFsyncRequests(Oid dbid);
 extern void DropRelationFiles(RelFileNodePendingDelete *delrels, int ndelrels, bool isRedo);

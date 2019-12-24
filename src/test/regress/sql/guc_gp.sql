@@ -1,5 +1,30 @@
 SELECT min_val, max_val FROM pg_settings WHERE name = 'gp_resqueue_priority_cpucores_per_segment';
 
+-- Test cursor gang should not be reused if SET command happens.
+CREATE OR REPLACE FUNCTION test_set_cursor_func() RETURNS text as $$
+DECLARE
+  result text;
+BEGIN
+  EXECUTE 'select setting from pg_settings where name=''temp_buffers''' INTO result;
+  RETURN result;
+END;
+$$ LANGUAGE plpgsql;
+
+SET temp_buffers = 2000;
+BEGIN;
+  DECLARE set_cusor CURSOR FOR SELECT relname FROM gp_dist_random('pg_class');
+  -- The GUC setting should not be dispatched to the cursor gang.
+  SET temp_buffers = 3000;
+END;
+
+-- Verify the cursor gang is not reused. If the gang is reused, the
+-- temp_buffers value on that gang should be old one, i.e. 2000 instead of
+-- the new committed 3000.
+SELECT * from (SELECT test_set_cursor_func() FROM gp_dist_random('pg_class') limit 1) t1
+  JOIN (SELECT test_set_cursor_func() FROM gp_dist_random('pg_class') limit 1) t2 ON TRUE;
+
+RESET temp_buffers;
+
 --
 -- Test GUC if cursor is opened
 --
@@ -79,13 +104,26 @@ reset work_mem;
 --
 CREATE TABLE timezone_table AS SELECT * FROM (VALUES (123,1513123564),(123,1512140765),(123,1512173164),(123,1512396441)) foo(a, b) DISTRIBUTED RANDOMLY;
 
-SELECT DISTINCT to_timestamp(b)::date FROM timezone_table;
+SELECT to_timestamp(b)::timestamp WITH TIME ZONE AS b_ts FROM timezone_table ORDER BY b_ts;
 SET timezone= 'America/New_York';
-SHOW timezone;
-SELECT DISTINCT to_timestamp(b)::date FROM timezone_table;
+-- Check if it is set correctly on QD.
+SELECT to_timestamp(1613123565)::timestamp WITH TIME ZONE;
+-- Check if it is set correctly on the QEs.
+SELECT to_timestamp(b)::timestamp WITH TIME ZONE AS b_ts FROM timezone_table ORDER BY b_ts;
 RESET timezone;
-SHOW timezone;
-SELECT DISTINCT to_timestamp(b)::date FROM timezone_table;
+-- Check if it is reset correctly on QD.
+SELECT to_timestamp(1613123565)::timestamp WITH TIME ZONE;
+-- Check if it is reset correctly on the QEs.
+SELECT to_timestamp(b)::timestamp WITH TIME ZONE AS b_ts FROM timezone_table ORDER BY b_ts;
+
+--
+-- Test if SET TIME ZONE INTERVAL is dispatched correctly to all segments
+--
+SET TIME ZONE INTERVAL '04:30:06' HOUR TO MINUTE;
+-- Check if it is set correctly on QD.
+SELECT to_timestamp(1613123565)::timestamp WITH TIME ZONE;
+-- Check if it is set correctly on the QEs.
+SELECT to_timestamp(b)::timestamp WITH TIME ZONE AS b_ts FROM timezone_table ORDER BY b_ts;
 
 -- Test default_transaction_isolation and transaction_isolation fallback from serializable to repeatable read
 CREATE TABLE test_serializable(a int);

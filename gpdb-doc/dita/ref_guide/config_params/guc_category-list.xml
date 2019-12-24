@@ -611,15 +611,11 @@
                 <xref href="guc-list.xml#gp_adjust_selectivity_for_outerjoins" type="section"
                   >gp_adjust_selectivity_for_outerjoins</xref>
               </p>
-              <p>
-                <xref href="guc-list.xml#gp_hashjoin_tuples_per_bucket" type="section"
-                  >gp_hashjoin_tuples_per_bucket</xref>
-              </p>
             </stentry>
             <stentry>
               <p>
-                <xref href="guc-list.xml#gp_statistics_use_fkeys" type="section"
-                  >gp_statistics_use_fkeys</xref>
+                <xref href="guc-list.xml#gp_hashjoin_tuples_per_bucket" type="section"
+                  >gp_hashjoin_tuples_per_bucket</xref>
               </p>
               <p>
                 <xref href="guc-list.xml#gp_workfile_compression" type="section"
@@ -650,6 +646,10 @@
               <p>
                 <xref href="guc-list.xml#gp_statistics_pullup_from_child_partition" type="section"
                   >gp_statistics_pullup_from_child_partition</xref>
+              </p>
+              <p>
+                <xref href="guc-list.xml#gp_statistics_use_fkeys" type="section"
+                  >gp_statistics_use_fkeys</xref>
               </p>
             </stentry>
           </strow>

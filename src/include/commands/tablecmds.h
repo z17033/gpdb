@@ -4,7 +4,7 @@
  *	  prototypes for tablecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/tablecmds.h
@@ -58,8 +58,6 @@ extern ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 			   bool useChangedOpts, GpPolicy *intoPolicy);
 
 extern void RemoveRelations(DropStmt *drop);
-
-extern bool RelationToRemoveIsTemp(const RangeVar *relation, DropBehavior behavior);
 
 extern Oid	AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode);
 

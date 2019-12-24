@@ -227,10 +227,29 @@ CdbDispatchPlan(struct QueryDesc *queryDesc,
 	 */
 	if (queryDesc->extended_query)
 	{
-		verify_shared_snapshot_ready();
+		verify_shared_snapshot_ready(gp_command_count);
 	}
 
 	cdbdisp_dispatchX(queryDesc, planRequiresTxn, cancelOnError);
+}
+
+/*
+ * SET command can not be dispatched to named portal (like CURSOR). On the one
+ * hand, named portal might be busy and also it should not be affected by
+ * the SET command. Then when a dispatcher state of named portal is destroyed,
+ * its gang should not be recycled because its guc was not set, so need to mark
+ * those gangs as not recyclable.
+ */
+static void
+cdbdisp_markNamedPortalGangsDestroyed(void)
+{
+	dispatcher_handle_t *head = open_dispatcher_handles;
+	while (head != NULL)
+	{
+		if (head->dispatcherState->isExtendedQuery)
+			head->dispatcherState->forceDestroyGang = true;
+		head = head->next;
+	}
 }
 
 /*
@@ -289,8 +308,6 @@ CdbDispatchSetCommand(const char *strCommand, bool cancelOnError)
 
 	cdbdisp_getDispatchResults(ds, &qeError);
 
-	cdbdisp_destroyDispatcherState(ds);
-
 	/*
 	 * For named portal (like CURSOR), SET command will not be
 	 * dispatched. Meanwhile such gang should not be reused because
@@ -300,8 +317,12 @@ CdbDispatchSetCommand(const char *strCommand, bool cancelOnError)
 
 	if (qeError)
 	{
+
+		FlushErrorState();
 		ReThrowError(qeError);
 	}
+
+	cdbdisp_destroyDispatcherState(ds);
 }
 
 /*
@@ -432,7 +453,7 @@ cdbdisp_dispatchCommandInternal(DispatchCommandQueryParms *pQueryParms,
 
 	if (qeError)
 	{
-		cdbdisp_destroyDispatcherState(ds);
+		FlushErrorState();
 		ReThrowError(qeError);
 	}
 
@@ -1125,6 +1146,10 @@ cdbdisp_dispatchX(QueryDesc* queryDesc,
 
 		primaryGang = slice->primaryGang;
 		Assert(primaryGang != NULL);
+		AssertImply(queryDesc->extended_query,
+					primaryGang->type == GANGTYPE_PRIMARY_READER ||
+					primaryGang->type == GANGTYPE_SINGLETON_READER ||
+					primaryGang->type == GANGTYPE_ENTRYDB_READER);
 
 		if (Test_print_direct_dispatch_info)
 			elog(INFO, "(slice %d) Dispatch command to %s", slice->sliceIndex,
@@ -1174,10 +1199,11 @@ cdbdisp_dispatchX(QueryDesc* queryDesc,
 		 */
 		cdbdisp_getDispatchResults(ds, &qeError);
 
-		cdbdisp_destroyDispatcherState(ds);
-
 		if (qeError)
+		{
+			FlushErrorState();
 			ReThrowError(qeError);
+		}
 
 		/*
 		 * Wasn't an error, must have been an interrupt.
@@ -1438,8 +1464,7 @@ CdbDispatchCopyStart(struct CdbCopy *cdbCopy, Node *stmt, int flags)
 
 	if (!cdbdisp_getDispatchResults(ds, &error))
 	{
-		Assert(error);
-		cdbdisp_destroyDispatcherState(ds);
+		FlushErrorState();
 		ReThrowError(error);
 	}
 

@@ -3,16 +3,17 @@
  *
  *	server checks and output routines
  *
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/check.c
  */
 
 #include "postgres_fe.h"
 
 #include "catalog/pg_authid.h"
+#include "fe_utils/string_utils.h"
 #include "mb/pg_wchar.h"
 #include "pg_upgrade.h"
-
+#include "greenplum/pg_upgrade_greenplum.h"
 
 static void check_new_cluster_is_empty(void);
 static void check_databases_are_compatible(void);
@@ -22,9 +23,9 @@ static void check_is_install_user(ClusterInfo *cluster);
 static void check_proper_datallowconn(ClusterInfo *cluster);
 static void check_for_prepared_transactions(ClusterInfo *cluster);
 static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
-static void check_for_array_of_partition_table_types(ClusterInfo *cluster);
 static void check_for_reg_data_type_usage(ClusterInfo *cluster);
 static void check_for_jsonb_9_4_usage(ClusterInfo *cluster);
+static void check_for_pg_role_prefix(ClusterInfo *cluster);
 static void get_bin_version(ClusterInfo *cluster);
 static char *get_canonical_locale_name(int category, const char *locale);
 
@@ -81,8 +82,6 @@ check_and_dump_old_cluster(bool live_check, char **sequence_script_file_name)
 	if (!live_check)
 		start_postmaster(&old_cluster, true);
 
-	get_pg_database_relfilenode(&old_cluster);
-
 	/* Extract a list of databases and tables from the old cluster */
 	get_db_and_rel_infos(&old_cluster);
 
@@ -100,12 +99,15 @@ check_and_dump_old_cluster(bool live_check, char **sequence_script_file_name)
 	check_for_prepared_transactions(&old_cluster);
 	check_for_reg_data_type_usage(&old_cluster);
 	check_for_isn_and_int8_passing_mismatch(&old_cluster);
-	check_for_array_of_partition_table_types(&old_cluster);
 
 	/*
 	 * Check for various Greenplum failure cases
 	 */
 	check_greenplum();
+
+	/* 9.5 and below should not have roles starting with pg_ */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 905)
+		check_for_pg_role_prefix(&old_cluster);
 
 	if (GET_MAJOR_VERSION(old_cluster.major_version) == 904 &&
 		old_cluster.controldata.cat_ver < JSONB_FORMAT_CHANGE_CAT_VER)
@@ -173,7 +175,7 @@ check_and_dump_old_cluster(bool live_check, char **sequence_script_file_name)
 	 * While not a check option, we do this now because this is the only time
 	 * the old server is running.
 	 */
-	if (!user_opts.check && user_opts.segment_mode == DISPATCHER)
+	if (!user_opts.check && is_greenplum_dispatcher_mode())
 		generate_old_dump();
 
 	if (!live_check)
@@ -241,7 +243,7 @@ issue_warnings_and_set_wal_level(char *sequence_script_file_name)
 		{
 			prep_status("Adjusting sequences");
 			exec_prog(UTILITY_LOG_FILE, NULL, true,
-					  "PGOPTIONS='-c gp_session_role=utility' "
+					  PG_OPTIONS_UTILITY_MODE
 					  "\"%s/psql\" " EXEC_PSQL_ARGS " %s -f \"%s\"",
 					  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 					  sequence_script_file_name);
@@ -287,10 +289,10 @@ output_completion_banner(char *analyze_script_file_name,
 			   deletion_script_file_name);
 	else
 		pg_log(PG_REPORT,
-		  "Could not create a script to delete the old cluster's data files\n"
-		  "because user-defined tablespaces or the new cluster's data directory\n"
-		  "exist in the old cluster directory.  The old cluster's contents must\n"
-		  "be deleted manually.\n");
+		 "Could not create a script to delete the old cluster's data files\n"
+			   "because user-defined tablespaces or the new cluster's data directory\n"
+			   "exist in the old cluster directory.  The old cluster's contents must\n"
+			   "be deleted manually.\n");
 }
 
 
@@ -448,8 +450,14 @@ equivalent_locale(int category, const char *loca, const char *locb)
 	lenb = charb ? (charb - canonb) : strlen(canonb);
 
 	if (lena == lenb && pg_strncasecmp(canona, canonb, lena) == 0)
+	{
+		pg_free(canona);
+		pg_free(canonb);
 		return true;
+	}
 
+	pg_free(canona);
+	pg_free(canonb);
 	return false;
 }
 
@@ -464,7 +472,7 @@ check_new_cluster_is_empty(void)
 	 * place from the QD at this point, so the cluster cannot be tested for
 	 * being empty.
 	 */
-	if (user_opts.segment_mode == SEGMENT)
+	if (!is_greenplum_dispatcher_mode())
 		return;
 
 	for (dbnum = 0; dbnum < new_cluster.dbarr.ndbs; dbnum++)
@@ -612,7 +620,8 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 {
 	FILE	   *script = NULL;
 	int			tblnum;
-	char		old_cluster_pgdata[MAXPGPATH], new_cluster_pgdata[MAXPGPATH];
+	char		old_cluster_pgdata[MAXPGPATH],
+				new_cluster_pgdata[MAXPGPATH];
 
 	*deletion_script_file_name = psprintf("%sdelete_old_cluster.%s",
 										  SCRIPT_PREFIX, SCRIPT_EXT);
@@ -627,7 +636,7 @@ create_script_for_old_cluster_deletion(char **deletion_script_file_name)
 	if (path_is_prefix_of_path(old_cluster_pgdata, new_cluster_pgdata))
 	{
 		pg_log(PG_WARNING,
-		   "\nWARNING:  new data directory should not be inside the old data directory, e.g. %s\n", old_cluster_pgdata);
+			   "\nWARNING:  new data directory should not be inside the old data directory, e.g. %s\n", old_cluster_pgdata);
 
 		/* Unlink file in case it is left over from a previous run. */
 		unlink(*deletion_script_file_name);
@@ -746,7 +755,8 @@ check_is_install_user(ClusterInfo *cluster)
 	res = executeQueryOrDie(conn,
 							"SELECT rolsuper, oid "
 							"FROM pg_catalog.pg_roles "
-							"WHERE rolname = current_user");
+							"WHERE rolname = current_user "
+							"AND rolname !~ '^pg_'");
 
 	/*
 	 * We only allow the install user in the new cluster (see comment below)
@@ -762,7 +772,8 @@ check_is_install_user(ClusterInfo *cluster)
 
 	res = executeQueryOrDie(conn,
 							"SELECT COUNT(*) "
-							"FROM pg_catalog.pg_roles ");
+							"FROM pg_catalog.pg_roles "
+							"WHERE rolname !~ '^pg_'");
 
 	if (PQntuples(res) != 1)
 		pg_fatal("could not determine the number of users\n");
@@ -778,7 +789,7 @@ check_is_install_user(ClusterInfo *cluster)
 	 * Greenplum cluster upgrade scheme will overwrite the QE's schema
 	 * with the QD's schema, making this check inappropriate for a QE upgrade.
 	 */
-	if (user_opts.segment_mode == DISPATCHER &&
+	if (is_greenplum_dispatcher_mode() &&
 		cluster == &new_cluster &&
 		atooid(PQgetvalue(res, 0, 0)) != 1)
 		pg_fatal("Only the install user can be defined in the new cluster.\n");
@@ -965,72 +976,6 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 		check_ok();
 }
 
-static void
-check_for_array_of_partition_table_types(ClusterInfo *cluster)
-{
-	const char *const SEPARATOR = "\n";
-	int			dbnum;
-	char	   *dependee_partition_report = palloc0(1);
-
-	prep_status("Checking array types derived from partitions");
-
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-	{
-		PGresult   *res;
-		int			n_tables_to_check;
-		int			i;
-
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/* Find the arraytypes derived from partitions of partitioned tables */
-		res = executeQueryOrDie(conn,
-								"SELECT td.typarray, ns.nspname || '.' || td.typname AS dependee_partition_qname "
-								"FROM (SELECT typarray, typname, typnamespace "
-								"FROM (SELECT pg_c.reltype AS rt "
-								"FROM pg_class AS pg_c JOIN pg_partitions AS pg_p ON pg_c.relname = pg_p.partitiontablename) "
-								"AS check_types JOIN pg_type AS pg_t ON check_types.rt = pg_t.oid WHERE pg_t.typarray != 0) "
-								"AS td JOIN pg_namespace AS ns ON td.typnamespace = ns.oid "
-								"ORDER BY td.typarray;");
-
-		n_tables_to_check = PQntuples(res);
-		for (i = 0; i < n_tables_to_check; i++)
-		{
-			char	   *array_type_oid_to_check = PQgetvalue(res, i, 0);
-			char	   *dependee_partition_qname = PQgetvalue(res, i, 1);
-			PGresult   *res2 = executeQueryOrDie(conn, "SELECT 1 FROM pg_depend WHERE refobjid = %s;", array_type_oid_to_check);
-
-			if (PQntuples(res2) > 0)
-			{
-				dependee_partition_report = repalloc(
-													 dependee_partition_report,
-													 strlen(dependee_partition_report) + strlen(array_type_oid_to_check) + 1 + strlen(dependee_partition_qname) + strlen(SEPARATOR) + 1
-					);
-				sprintf(
-						&(dependee_partition_report[strlen(dependee_partition_report)]),
-						"%s %s%s",
-						array_type_oid_to_check, dependee_partition_qname, SEPARATOR
-					);
-			}
-		}
-
-		PQclear(res);
-		PQfinish(conn);
-	}
-
-	if (strlen(dependee_partition_report))
-	{
-		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal(
-				 "Array types derived from partitions of a partitioned table must not have dependants.\n"
-				 "OIDs of such types found and their original partitions:\n%s",
-				 dependee_partition_report
-			);
-	}
-	pfree(dependee_partition_report);
-
-	check_ok();
-}
 
 /*
  * check_for_reg_data_type_usage()
@@ -1227,6 +1172,34 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 		check_ok();
 }
 
+/*
+ * check_for_pg_role_prefix()
+ *
+ *	Versions older than 9.6 should not have any pg_* roles
+ */
+static void
+check_for_pg_role_prefix(ClusterInfo *cluster)
+{
+	PGresult   *res;
+	PGconn	   *conn = connectToServer(cluster, "template1");
+
+	prep_status("Checking for roles starting with 'pg_'");
+
+	res = executeQueryOrDie(conn,
+							"SELECT * "
+							"FROM pg_catalog.pg_roles "
+							"WHERE rolname ~ '^pg_'");
+
+	if (PQntuples(res) != 0)
+		pg_fatal("The %s cluster contains roles starting with 'pg_'\n",
+				 CLUSTER_NAME(cluster));
+
+	PQclear(res);
+
+	PQfinish(conn);
+
+	check_ok();
+}
 
 static void
 get_bin_version(ClusterInfo *cluster)

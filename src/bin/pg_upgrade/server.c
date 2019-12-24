@@ -3,7 +3,7 @@
  *
  *	database server functions
  *
- *	Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/server.c
  */
 
@@ -19,8 +19,10 @@
 #if 0
 #include "fe_utils/connect.h"
 #endif
+#include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
 
+#include "greenplum/pg_upgrade_greenplum.h"
 
 static PGconn *get_db_conn(ClusterInfo *cluster, const char *db_name);
 
@@ -250,7 +252,7 @@ start_postmaster(ClusterInfo *cluster, bool throw_error)
 		version_opts = "-c synchronous_standby_names='' --xid_warn_limit=10000000";
 	else
 	{
-		if (user_opts.segment_mode == DISPATCHER)
+		if (is_greenplum_dispatcher_mode())
 			version_opts =
 				"-c gp_dbid=1 -c gp_contentid=-1 -c gp_num_contents_in_cluster=1";
 		else

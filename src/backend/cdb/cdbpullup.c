@@ -15,14 +15,19 @@
 
 #include "postgres.h"
 
+#include "access/hash.h"		/* HashEqualStrategyNumber */
 #include "nodes/makefuncs.h"	/* makeVar() */
 #include "nodes/plannodes.h"	/* Plan */
 #include "optimizer/clauses.h"	/* expression_tree_walker/mutator */
 #include "optimizer/tlist.h"	/* tlist_member() */
 #include "nodes/nodeFuncs.h"	/* exprType() and exprTypmod() */
 #include "parser/parsetree.h"	/* get_tle_by_resno() */
+#include "utils/lsyscache.h"	/* get_opfamily_member() */
 
 #include "cdb/cdbpullup.h"		/* me */
+
+
+static bool cdbpullup_missingVarWalker(Node *node, void *targetlist);
 
 /*
  * cdbpullup_expr
@@ -44,13 +49,8 @@
  *      newvarno = varno to be used in new Var nodes.  Ignored if a non-NULL
  *              newvarlist is given.
  *
- * When calling this function on an expr which has NOT yet been transformed
- * by set_plan_references(), newvarno should be the RTE index assigned to
- * the result of the projection.
- *
- * When calling this function on an expr which HAS been transformed by
- * set_plan_references(), newvarno should usually be OUTER_VAR; or 0 if the
- * expr is to be used in the targetlist of an Agg or Group node.
+ * This function cannot be used set_plan_references(). newvarno should be the
+ * RTE index assigned to the result of the projection.
  *
  * At present this function doesn't support pull-up from a subquery into a
  * containing query: there is no provision for adjusting the varlevelsup
@@ -94,16 +94,7 @@ pullUpExpr_mutator(Node *node, void *context)
 		/* Is targetlist a List of TargetEntry?  (Plan nodes use this format) */
 		if (IsA(linitial(ctx->targetlist), TargetEntry))
 		{
-
-			/* After set_plan_references(), search on varattno only. */
-			if (var->varno == OUTER_VAR ||
-				var->varno == INNER_VAR ||
-				var->varno == 0)
-				tle = cdbpullup_findSubplanRefInTargetList(var->varattno,
-														   ctx->targetlist);
-			/* Before set_plan_references(), search for exact match. */
-			else
-				tle = tlist_member((Node *) var, ctx->targetlist);
+			tle = tlist_member((Node *) var, ctx->targetlist);
 
 			/* Fail if P's result does not include this column. */
 			if (!tle)
@@ -227,7 +218,9 @@ cdbpullup_expr(Expr *expr, List *targetlist, List *newvarlist, Index newvarno)
  *
  * Searches the given equivalence class for a member that uses no rels
  * outside the 'relids' set, and either is a member of 'targetlist', or
- * uses no Vars that are not in 'targetlist'.
+ * uses no Vars that are not in 'targetlist'. Furthermore, if
+ * 'hashOpFamily' is valid, the member must be hashable using that hash
+ * operator family.
  *
  * If found, returns the chosen member's expression, otherwise returns
  * NULL.
@@ -244,7 +237,8 @@ cdbpullup_expr(Expr *expr, List *targetlist, List *newvarlist, Index newvarno)
  * targetlist expr.)
  */
 Expr *
-cdbpullup_findEclassInTargetList(EquivalenceClass *eclass, List *targetlist)
+cdbpullup_findEclassInTargetList(EquivalenceClass *eclass, List *targetlist,
+								 Oid hashOpFamily)
 {
 	ListCell   *lc;
 
@@ -253,6 +247,11 @@ cdbpullup_findEclassInTargetList(EquivalenceClass *eclass, List *targetlist)
 		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
 		Expr	   *key = (Expr *) em->em_expr;
 		ListCell *lc_tle;
+
+		if (OidIsValid(hashOpFamily) &&
+			!get_opfamily_member(hashOpFamily, em->em_datatype, em->em_datatype,
+								 HTEqualStrategyNumber))
+			continue;
 
 		/* A constant is OK regardless of the target list */
 		if (em->em_is_const)
@@ -279,6 +278,7 @@ cdbpullup_findEclassInTargetList(EquivalenceClass *eclass, List *targetlist)
 		foreach(lc_tle, targetlist)
 		{
 			Node	   *tlexpr = lfirst(lc_tle);
+			Node	   *naked_tlexpr;
 
 			/*
 			 * Check if targetlist is a List of TargetEntry. (Planner's
@@ -288,30 +288,27 @@ cdbpullup_findEclassInTargetList(EquivalenceClass *eclass, List *targetlist)
 				tlexpr = (Node *) ((TargetEntry *) tlexpr)->expr;
 
 			/* ignore RelabelType nodes on both sides */
-			while (tlexpr && IsA(tlexpr, RelabelType))
-				tlexpr = (Node *) ((RelabelType *) tlexpr)->arg;
+			naked_tlexpr = tlexpr;
+			while (naked_tlexpr && IsA(naked_tlexpr, RelabelType))
+				naked_tlexpr = (Node *) ((RelabelType *) naked_tlexpr)->arg;
 
 			if (IsA(key, Var))
 			{
-				if (IsA(tlexpr, Var))
+				if (IsA(naked_tlexpr, Var))
 				{
 					Var		   *keyvar = (Var *) key;
-					Var		   *tlvar = (Var *) tlexpr;
+					Var		   *tlvar = (Var *) naked_tlexpr;
 
 					if (keyvar->varno == tlvar->varno &&
 						keyvar->varattno == tlvar->varattno &&
 						keyvar->varlevelsup == tlvar->varlevelsup)
-						return key;
+						return (Expr *) tlexpr;
 				}
 			}
 			else
 			{
-				/* ignore RelabelType nodes on both sides */
-				while (key && IsA(key, RelabelType))
-					key = (Expr *) ((RelabelType *) key)->arg;
-
-				if (equal(tlexpr, key))
-					return key;
+				if (equal(naked_tlexpr, key))
+					return (Expr *) tlexpr;
 			}
 		}
 
@@ -342,7 +339,7 @@ cdbpullup_truncatePathKeysForTargetList(List *pathkeys, List *targetlist)
 	{
 		PathKey	   *pk = (PathKey *) lfirst(lc);
 
-		if (!cdbpullup_findEclassInTargetList(pk->pk_eclass, targetlist))
+		if (!cdbpullup_findEclassInTargetList(pk->pk_eclass, targetlist, InvalidOid))
 			break;
 
 		new_pathkeys = lappend(new_pathkeys, pk);
@@ -350,40 +347,6 @@ cdbpullup_truncatePathKeysForTargetList(List *pathkeys, List *targetlist)
 
 	return new_pathkeys;
 }
-
-/*
- * cdbpullup_findSubplanRefInTargetList
- *
- * Given a targetlist, returns ptr to first TargetEntry whose expr is a
- * Var node having the specified varattno, and having its varno in executor
- * format (varno is OUTER_VAR, INNER_VAR, or 0) as set by set_plan_references().
- * Returns NULL if no such TargetEntry is found.
- */
-TargetEntry *
-cdbpullup_findSubplanRefInTargetList(AttrNumber varattno, List *targetlist)
-{
-	ListCell   *cell;
-	TargetEntry *tle;
-	Var		   *var;
-
-	foreach(cell, targetlist)
-	{
-		tle = (TargetEntry *) lfirst(cell);
-		if (IsA(tle->expr, Var))
-		{
-			var = (Var *) tle->expr;
-			if (var->varattno == varattno)
-			{
-				if (var->varno == OUTER_VAR ||
-					var->varno == INNER_VAR ||
-					var->varno == 0)
-					return tle;
-			}
-		}
-	}
-	return NULL;
-}								/* cdbpullup_findSubplanRefInTargetList */
-
 
 /*
  * cdbpullup_isExprCoveredByTargetlist
@@ -507,7 +470,7 @@ cdbpullup_make_expr(Index varno, AttrNumber varattno, Expr *oldexpr, bool modify
  *
  * See also: cdbpullup_isExprCoveredByTargetlist
  */
-bool
+static bool
 cdbpullup_missingVarWalker(Node *node, void *targetlist)
 {
 	if (!node)

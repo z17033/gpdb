@@ -1139,6 +1139,8 @@ MemoryAccounting_GetOwnerName(MemoryOwnerType ownerType)
 		return "X_Agg";
 	case MEMORY_OWNER_TYPE_Exec_Unique:
 		return "X_Unique";
+	case MEMORY_OWNER_TYPE_Exec_Gather:
+		return "X_Gather";
 	case MEMORY_OWNER_TYPE_Exec_Hash:
 		return "X_Hash";
 	case MEMORY_OWNER_TYPE_Exec_SetOp:
@@ -1157,8 +1159,6 @@ MemoryAccounting_GetOwnerName(MemoryOwnerType ownerType)
 		return "X_ModifyTable";
 	case MEMORY_OWNER_TYPE_Exec_LockRows:
 		return "X_LockRows";
-	case MEMORY_OWNER_TYPE_Exec_DML:
-		return "X_DML";
 	case MEMORY_OWNER_TYPE_Exec_SplitUpdate:
 		return "X_SplitUpdate";
 	case MEMORY_OWNER_TYPE_Exec_RowTrigger:

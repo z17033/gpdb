@@ -59,55 +59,15 @@ typedef enum GpSetOpType
 } GpSetOpType;
 
 extern 
-GpSetOpType choose_setop_type(List *planlist); 
+GpSetOpType choose_setop_type(List *pathlist);
 
 extern
-void adjust_setop_arguments(PlannerInfo *root, List *planlist, GpSetOpType setop_type);
+void adjust_setop_arguments(PlannerInfo *root, List *pathlist, List *tlist_list, GpSetOpType setop_type);
 
 
-extern
-Motion* make_motion_hash_all_targets(PlannerInfo *root, Plan *subplan);
-
-extern Motion *make_motion_hash(PlannerInfo *root, Plan *subplan, List *hashexprs, List *hashopfamilies);
-extern Motion *make_motion_hash_exprs(PlannerInfo *root, Plan *subplan, List *hashexprs);
+extern Path *make_motion_hash_all_targets(PlannerInfo *root, Path *subpath, List *tlist);
 
 extern
-Motion* make_motion_gather_to_QD(PlannerInfo *root, Plan *subplan, List *sortPathKeys);
-
-extern
-Motion* make_motion_gather_to_QE(PlannerInfo *root, Plan *subplan, List *sortPathKeys);
-
-extern
-Motion *make_motion_gather(PlannerInfo *root, Plan *subplan, List *sortPathKeys);
-
-extern
-void mark_append_locus(Plan *plan, GpSetOpType optype);
-
-extern
-void mark_passthru_locus(Plan *plan, bool with_hash, bool with_sort);
-
-extern
-void mark_sort_locus(Plan *plan);
-
-extern
-void mark_plan_general(Plan* plan, int numsegments);
-
-extern
-void mark_plan_strewn(Plan* plan, int numsegments);
-
-extern
-void mark_plan_replicated(Plan* plan, int numsegments);
-
-extern
-void mark_plan_entry(Plan* plan);
-
-extern
-void mark_plan_singleQE(Plan* plan, int numsegments);
-
-extern
-void mark_plan_outerquery(Plan* plan, int numsegments);
-
-extern
-void mark_plan_segment_general(Plan* plan, int numsegments);
+void mark_append_locus(Path *path, GpSetOpType optype);
 
 #endif   /* CDBSETOP_H */
