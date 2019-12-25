@@ -103,7 +103,7 @@ cdbdisp_waitDispatchFinish(struct CdbDispatcherState *ds)
  * In some cases, QD needs wait/check the received acknowledge message from QEs.
  * So QD knows QE runs expectantly.
  *
- * QE should call cdb_sendAckMessageToQD to send acknowledge message to QD.
+ * QE should call cdbdisp_sendAckMessageToQD to send acknowledge message to QD.
  *
  * wait: if true, wait until required ack message is received from all QEs.
  */
@@ -410,12 +410,12 @@ cdbdisp_destroyDispatcherState(CdbDispatcherState *ds)
 }
 
 /*
- * cdb_sendAckMessageToQD - send acknowledge message to QD(runs on QE).
+ * cdbdisp_sendAckMessageToQD - send acknowledge message to QD(runs on QE).
  *
  * QD uses cdbdisp_waitDispatchAckMessage to wait QE acknowledge message.
  */
 void
-cdb_sendAckMessageToQD(const char *message)
+cdbdisp_sendAckMessageToQD(const char *message)
 {
 	StringInfoData buf;
 

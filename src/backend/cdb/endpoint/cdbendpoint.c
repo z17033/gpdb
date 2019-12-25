@@ -18,7 +18,7 @@
  * (3) The endpoints are on all segments node. e.g:
  * > DECLARE c1 PARALLEL RETRIEVE CURSOR FOR SELECT * FROM T1;
  *
- * When a parallel retrieve cusor is declared, the query plan will be dispatched
+ * When a parallel retrieve cursor is declared, the query plan will be dispatched
  * to the corresponding QEs. Before the query execution, endpoints will be
  * created first on QEs. An entry of EndpointDesc in the shared memory represents
  * the endpoint. Through the EndpointDesc, the client could know the endpoint's
@@ -27,7 +27,7 @@
  * obtained on QD by UDF "gp_endpoints_info" or on QE's retrieve session by UDF
  * "gp_endpoint_status_info". The EndpointDesc are stored on QE only in the
  * shared memory. QD doesn't know the endpoint's information unless it sends a
- * query requst (by UDF "gp_endpoint_status_info") to QE.
+ * query request (by UDF "gp_endpoint_status_info") to QE.
  *
  * Instead of returning the query result to master through a normal dest receiver,
  * endpoints writes the results to TQueueDestReceiver which is a shared memory
@@ -151,7 +151,7 @@ static volatile EndpointDesc *activeSharedEndpoint = NULL;
 static dsm_segment *activeDsmSeg = NULL;
 
 /* Init helper functions */
-static void init_shared_endpoints(void *address);
+static void init_shared_endpoints(Endpoint endpoints);
 
 /* Token utility functions */
 static const int8 *get_or_create_token(void);
@@ -234,10 +234,8 @@ EndpointCTXShmemInit(void)
  * Init EndpointDesc entries.
  */
 static void
-init_shared_endpoints(void *address)
+init_shared_endpoints(Endpoint endpoints)
 {
-	Endpoint	endpoints = (Endpoint) address;
-
 	for (int i = 0; i < MAX_ENDPOINT_SIZE; ++i)
 	{
 		endpoints[i].databaseID = InvalidOid;
@@ -423,7 +421,7 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
 	 * Once the endpoint has been created in shared memory, send acknowledge
 	 * message to QD so DECLARE PARALLEL RETRIEVE CURSOR statement can finish.
 	 */
-	cdb_sendAckMessageToQD(ENDPOINT_READY_ACK);
+	cdbdisp_sendAckMessageToQD(ENDPOINT_READY_ACK);
 	return CreateTupleQueueDestReceiver(shmMqHandle);
 }
 
@@ -474,7 +472,7 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	 * purpose is to not clean up EndpointDesc entry until CLOSE/COMMIT/ABORT
 	 * (i.e. ProtalCleanup get executed). So user can still see the finished
 	 * endpoint status through gp_endpoints_info UDF. This is needed because
-	 * pg_cusor view can still see the PARALLEL RETRIEVE CURSOR
+	 * pg_cursor view can still see the PARALLEL RETRIEVE CURSOR
 	 */
 	wait_parallel_retrieve_close();
 
@@ -814,7 +812,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 		/* sessionInfoEntry may get removed. This means xact finished. */
 		if (sessionInfoEntry)
 		{
-			cdb_sendAckMessageToQD(ENDPOINT_FINISHED_ACK);
+			cdbdisp_sendAckMessageToQD(ENDPOINT_FINISHED_ACK);
 		}
 	}
 }
@@ -1287,7 +1285,6 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
  * status
  *
  * If get error, then rethrow the error.
- * Return true if the PARALLEL RETRIEVE CURSOR Execution Finished.
  */
 void
 check_parallel_cursor_errors(EState *estate)
