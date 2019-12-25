@@ -22,6 +22,10 @@
 #include "funcapi.h"
 #include "libpq-fe.h"
 #include "utils/builtins.h"
+#include "utils/portal.h"
+#ifdef FAULT_INJECTOR
+#include "utils/faultinjector.h"
+#endif
 
 #define atooid(x)  ((Oid) strtoul((x), NULL, 10))
 
@@ -61,12 +65,15 @@ typedef struct
 	int			currentIdx;		/* current index of EndpointDesc in the list */
 }	EndpointsStatusInfo;
 
+extern Datum gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
+extern Datum gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS);
 extern Datum gp_endpoints_info(PG_FUNCTION_ARGS);
 extern Datum gp_endpoints_status_info(PG_FUNCTION_ARGS);
 
 /* Used in UDFs */
 static char *status_enum_to_string(enum AttachStatus status);
 static enum AttachStatus status_string_to_enum(const char *status);
+static bool check_parallel_retrieve_cursor(const char *cursorName, bool isWait);
 
 /* Endpoint control information for current session. */
 struct EndpointControl EndpointCtl = {PARALLEL_RETRIEVE_NONE, InvalidSession};
@@ -192,6 +199,123 @@ bool
 endpoint_name_equals(const char *name1, const char *name2)
 {
 	return strncmp(name1, name2, NAMEDATALEN) == 0;
+}
+
+/*
+ * gp_check_parallel_retrieve_cursor
+ *
+ * Check whether given parallel retrieve cursor is finished immediately.
+ *
+ * Return true means finished.
+ * Error out when parallel retrieve cursor has exception raised.
+ */
+Datum
+gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS)
+{
+	const char *cursorName = NULL;
+
+	cursorName = PG_GETARG_CSTRING(0);
+
+	PG_RETURN_BOOL(check_parallel_retrieve_cursor(cursorName, false));
+}
+
+/*
+ * gp_check_parallel_retrieve_cursor
+ *
+ * Wait until given parallel retrieve cursor is finished.
+ *
+ * Return true means finished.
+ * Error out when parallel retrieve cursor has exception raised.
+ */
+Datum
+gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS)
+{
+	const char *cursorName = NULL;
+
+	cursorName = PG_GETARG_CSTRING(0);
+
+	PG_RETURN_BOOL(check_parallel_retrieve_cursor(cursorName, true));
+}
+
+/*
+ * check_parallel_retrieve_cursor
+ *
+ * Support function for UDFs:
+ * gp_check_parallel_retrieve_cursor
+ * gp_wait_parallel_retrieve_cursor
+ *
+ * Check whether given parallel retrieve cursor is finished.
+ * If isWait is true, hang until parallel retrieve cursor finished.
+ *
+ * Return true means finished.
+ * Error out when parallel retrieve cursor has exception raised.
+ */
+static bool
+check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
+{
+	bool		retVal = false;
+	bool		isParallelRetrieve = false;
+	Portal		portal;
+	EState *estate = NULL;
+
+	/* get the portal from the portal name */
+	portal = GetPortalByName(cursorName);
+	if (!PortalIsValid(portal))
+	{
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_CURSOR),
+			errmsg("cursor \"%s\" does not exist", cursorName)));
+		return false;			/* keep compiler happy */
+	}
+	isParallelRetrieve =
+		(portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) > 0;
+	if (!isParallelRetrieve)
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("this UDF only works for PARALLEL RETRIEVE CURSOR.")));
+		return false;
+	}
+	estate = portal->queryDesc->estate;
+	retVal = cdbdisp_checkDispatchAckMessage(estate->dispatcherState, ENDPOINT_FINISHED_ACK, isWait);
+
+#ifdef FAULT_INJECTOR
+	HOLD_INTERRUPTS();
+	SIMPLE_FAULT_INJECTOR("check_parallel_retrieve_cursor_after_udf");
+	RESUME_INTERRUPTS();
+#endif
+
+	check_parallel_cursor_errors(estate);
+	return retVal;
+}
+
+/*
+ * check_parallel_cursor_errors - Check the PARALLEL RETRIEVE CURSOR execution
+ * status
+ *
+ * If get error, then rethrow the error.
+ */
+void
+check_parallel_cursor_errors(EState *estate)
+{
+	CdbDispatcherState *ds;
+
+	Assert(estate);
+
+	ds = estate->dispatcherState;
+	/*
+	 * If QD, wait for QEs to finish and check their results.
+	 */
+	if (cdbdisp_checkResultsErrcode(ds->primaryResults))
+	{
+		ErrorData  *qeError = NULL;
+
+		cdbdisp_getDispatchResults(ds, &qeError);
+		Assert(qeError);
+		estate->dispatcherState = NULL;
+		cdbdisp_cancelDispatch(ds);
+		cdbdisp_destroyDispatcherState(ds);
+		ReThrowError(qeError);
+	}
 }
 
 /*

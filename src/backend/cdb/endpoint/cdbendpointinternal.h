@@ -112,6 +112,8 @@ typedef struct EndpointControl
 typedef EndpointDesc *Endpoint;
 extern EndpointControl EndpointCtl;		/* Endpoint ctrl */
 
+extern void check_parallel_cursor_errors(EState *estate);
+
 /* Endpoint shared memory utility functions in "cdbendpoint.c" */
 extern EndpointDesc *get_endpointdesc_by_index(int index);
 extern EndpointDesc *find_endpoint(const char *endpointName, int sessionID);
