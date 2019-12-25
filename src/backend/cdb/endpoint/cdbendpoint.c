@@ -359,7 +359,7 @@ WaitEndpointReady(EState *estate)
  * id as a part of the token. And same session will have the same token. Thus the
  * retriever will know which session to attach when doing authentication.
  */
-const int8 *
+static const int8 *
 get_or_create_token(void)
 {
 #ifdef HAVE_STRONG_RANDOM
@@ -492,7 +492,7 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
  * cursorName - the parallel retrieve cursor name.
  * dsmHandle  - dsm handle of shared memory message queue.
  */
-EndpointDesc *
+static EndpointDesc *
 alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
 {
 	int			i;
@@ -583,7 +583,7 @@ alloc_endpoint(const char *cursorName, dsm_handle dsmHandle)
  * 2. Tuple's TupleDesc.
  * 3. Shared memory message queue.
  */
-void
+static void
 create_and_connect_mq(TupleDesc tupleDesc, dsm_segment **mqSeg /* out */ ,
 					  shm_mq_handle **mqHandle /* out */ )
 {
@@ -654,7 +654,7 @@ create_and_connect_mq(TupleDesc tupleDesc, dsm_segment **mqSeg /* out */ ,
  * Create/reuse SessionInfoEntry for current session in shared memory.
  * SessionInfoEntry is used for retrieve auth.
  */
-void
+static void
 init_session_info_entry(void)
 {
 	SessionInfoEntry	*infoEntry = NULL;
@@ -718,7 +718,7 @@ init_session_info_entry(void)
  * for all tuples, sender should wait receiver. Cause if sender detached
  * from the queue, the queue will be not available for receiver.
  */
-void
+static void
 wait_receiver(void)
 {
 	elog(DEBUG3, "CDB_ENDPOINTS: wait receiver.");
@@ -758,7 +758,7 @@ wait_receiver(void)
  * This should happen after free endpoint, otherwise endpoint->mq_dsm_handle
  * becomes invalid pointer.
  */
-void
+static void
 detach_mq(dsm_segment *dsmSeg)
 {
 	elog(DEBUG3, "CDB_ENDPOINT: Sender message queue detaching. '%p'",
@@ -775,7 +775,7 @@ detach_mq(dsm_segment *dsmSeg)
  * job or abort.
  * Needs to be called with exclusive lock on ParallelCursorEndpointLock.
  */
-void
+static void
 unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 {
 	SessionInfoEntry *sessionInfoEntry;
@@ -821,7 +821,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
  * If endpoint exit with error, let retrieve role know exception happened.
  * Called by endpoint.
  */
-void
+static void
 signal_receiver_abort(pid_t receiverPid, enum AttachStatus attachStatus)
 {
 	bool		isAttached;
@@ -839,7 +839,7 @@ signal_receiver_abort(pid_t receiverPid, enum AttachStatus attachStatus)
 /*
  * endpoint_abort - xact abort routine for endpoint
  */
-void
+static void
 endpoint_abort(void)
 {
 	if (activeSharedEndpoint)
@@ -879,7 +879,7 @@ endpoint_abort(void)
  * The purpose is to not clean up EndpointDesc entry until
  * CLOSE/COMMIT/ABORT (ie. ProtalCleanup get executed).
  */
-void
+static void
 wait_parallel_retrieve_close(void)
 {
 	ResetLatch(&MyProc->procLatch);
@@ -918,7 +918,7 @@ wait_parallel_retrieve_close(void)
  *
  * Needs to be called with exclusive lock on ParallelCursorEndpointLock.
  */
-void
+static void
 free_endpoint(volatile EndpointDesc * endpoint)
 {
 	SessionTokenTag tag;
@@ -972,7 +972,7 @@ register_endpoint_callbacks(void)
 /*
  * If endpoint/sender on xact abort, do endpoint clean jobs.
  */
-void
+static void
 sender_xact_abort_callback(XactEvent ev, void *vp)
 {
 	if (ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT)
@@ -989,7 +989,7 @@ sender_xact_abort_callback(XactEvent ev, void *vp)
 /*
  * If endpoint/sender on sub xact abort, do endpoint clean jobs.
  */
-void
+static void
 sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
 						SubTransactionId parentSubid, void *arg)
 {
@@ -1102,7 +1102,7 @@ get_session_id_for_auth(Oid userID, const int8 *token)
  * the sessionID and 5 random bytes.
  * The endpoint name should be unique across sessions.
  */
-void
+static void
 generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 {
 	/*
@@ -1150,7 +1150,7 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
  * When an xact finished, clean "session - token" mapping entry in
  * shared memory is needed, since there's no endpoint for current session.
  */
-void
+static void
 session_info_clean_callback(XactEvent ev, void *vp)
 {
 	if ((ev == XACT_EVENT_COMMIT || ev == XACT_EVENT_PARALLEL_COMMIT ||
@@ -1242,7 +1242,7 @@ gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS)
  * Return true means finished.
  * Error out when parallel retrieve cursor has exception raised.
  */
-bool
+static bool
 check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 {
 	bool		retVal = false;
@@ -1286,7 +1286,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
  *
  * If get error, then rethrow the error.
  */
-void
+static void
 check_parallel_cursor_errors(EState *estate)
 {
 	CdbDispatcherState *ds;

@@ -543,7 +543,7 @@ gp_endpoints_status_info(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
-char *
+static char *
 status_enum_to_string(enum AttachStatus status)
 {
 	char	   *result = NULL;
@@ -572,7 +572,7 @@ status_enum_to_string(enum AttachStatus status)
 	return result;
 }
 
-enum AttachStatus
+static enum AttachStatus
 status_string_to_enum(const char *status)
 {
 	Assert(status);
