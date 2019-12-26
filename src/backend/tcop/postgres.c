@@ -3844,7 +3844,7 @@ ProcessInterrupts(const char* filename, int lineno)
 
 			if (HasCancelMessage())
 			{
-				char *buffer			 = palloc0(MAX_CANCEL_MSG);
+				char *buffer = palloc0(MAX_CANCEL_MSG);
 
 				GetCancelMessage(&buffer, MAX_CANCEL_MSG);
 				appendStringInfo(&cancel_msg_str, ": \"%s\"", buffer);

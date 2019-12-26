@@ -2440,13 +2440,16 @@ void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 		cids = ChooseEndpointContentIDForParallelCursor(
 			queryDesc->plannedstmt->planTree, &endPointExecPosition);
 		ExplainOpenGroup("Cursor", "Cursor", true, es);
-		switch(endPointExecPosition) {
-			case ENDPOINT_ON_ENTRY_DB: {
+		switch(endPointExecPosition)
+		{
+			case ENDPOINT_ON_ENTRY_DB:
+			{
 				appendStringInfo(&endpointInfoStr, "\"on master\"");
 				break;
 			}
 			case ENDPOINT_ON_SINGLE_QE:
-			case ENDPOINT_ON_SOME_QE: {
+			case ENDPOINT_ON_SOME_QE:
+			{
 				ListCell * cell;
 				bool isFirst = true;
 				appendStringInfo(&endpointInfoStr, "on segments: contentid [");
@@ -2459,12 +2462,16 @@ void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 				break;
 			}
 			case ENDPOINT_ON_ALL_QE:
-			default: {
+			{
 				appendStringInfo(&endpointInfoStr, "on all %d segments", getgpsegmentCount());
 				break;
 			}
+			default:
+			{
+				elog(ERROR, "invalid ndPoint position : %d", endPointExecPosition);
+			}
 		}
-		ExplainProperty("Endpoint", endpointInfoStr.data, false, es);
+		ExplainPropertyText("Endpoint", endpointInfoStr.data, es);
 		list_free(cids);
 		ExplainCloseGroup("Cursor", "Cursor", true, es);
 	}

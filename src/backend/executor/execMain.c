@@ -5220,10 +5220,6 @@ FillSliceTable(EState *estate, PlannedStmt *stmt, bool parallel_cursor)
 	cxt.estate = estate;
 	cxt.currentSliceId = 0;
 
-	/*
-	 * INTO and PARALLEL RETRIEVE CURSOR are handled here because they dispatch but have
-	 * no motion between QD and QEs.
-	 */
 	if (stmt->intoClause != NULL || stmt->copyIntoClause != NULL || stmt->refreshClause)
 	{
 		Slice	   *currentSlice = (Slice *) linitial(sliceTable->slices);
@@ -5243,9 +5239,13 @@ FillSliceTable(EState *estate, PlannedStmt *stmt, bool parallel_cursor)
 	}
 	else if (parallel_cursor)
 	{
+		/*
+		 * PARALLEL RETRIEVE CURSOR is handled here.
+		 */
 		Slice	   *currentSlice = (Slice *) linitial(sliceTable->slices);
 		int			numsegments = stmt->planTree->flow->numsegments;
-		enum EndPointExecPosition endPointExecPosition = GetParallelCursorEndpointPosition(stmt->planTree);
+		enum EndPointExecPosition endPointExecPosition =
+				GetParallelCursorEndpointPosition(stmt->planTree);
 
 		if (endPointExecPosition == ENDPOINT_ON_ENTRY_DB)
 			currentSlice->gangType = GANGTYPE_ENTRYDB_READER;
