@@ -19,7 +19,6 @@
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "cdb/cdbpartition.h"
-#include "cdb/cdbendpoint.h"
 #include "commands/createas.h"
 #include "commands/defrem.h"
 #include "commands/prepare.h"
@@ -520,7 +519,6 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	double		totaltime = 0;
 	int			eflags;
 	int			instrument_option = 0;
-	int			cursorOptions = 0;
 
 	if (es->analyze && es->timing)
 		instrument_option |= INSTRUMENT_TIMER;
@@ -630,47 +628,7 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	/* Create textual dump of plan tree */
 	ExplainPrintPlan(es, queryDesc);
 
-	if (queryDesc->utilitystmt && IsA(queryDesc->utilitystmt, DeclareCursorStmt))
-		cursorOptions |= ((DeclareCursorStmt *) queryDesc->utilitystmt)->options;
-
-	if (cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
-	{
-		StringInfoData            endpointInfoStr;
-		enum EndPointExecPosition endPointExecPosition;
-		List *cids;
-
-		initStringInfo(&endpointInfoStr);
-		cids = ChooseEndpointContentIDForParallelCursor(
-			queryDesc->plannedstmt->planTree, &endPointExecPosition);
-		ExplainOpenGroup("Cursor", "Cursor", true, es);
-		switch(endPointExecPosition) {
-			case ENDPOINT_ON_ENTRY_DB: {
-				appendStringInfo(&endpointInfoStr, "\"on master\"");
-				break;
-			}
-			case ENDPOINT_ON_SINGLE_QE:
-			case ENDPOINT_ON_SOME_QE: {
-				ListCell * cell;
-				bool isFirst = true;
-				appendStringInfo(&endpointInfoStr, "on segments: contentid [");
-				foreach(cell, cids)
-				{
-					appendStringInfo(&endpointInfoStr, (isFirst)?"%d":", %d", lfirst_int(cell));
-					isFirst = false;
-				}
-				appendStringInfo(&endpointInfoStr, "]");
-				break;
-			}
-			case ENDPOINT_ON_ALL_QE:
-			default: {
-				appendStringInfo(&endpointInfoStr, "on all %d segments", getgpsegmentCount());
-				break;
-			}
-		}
-		ExplainProperty("Endpoint", endpointInfoStr.data, false, es);
-		list_free(cids);
-		ExplainCloseGroup("Cursor", "Cursor", true, es);
-	}
+	ExplainParallelRetrieveCursor(es, queryDesc);
 
 	/* Print info about runtime of triggers */
 	if (es->summary && planduration)
