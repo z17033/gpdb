@@ -164,7 +164,7 @@ PerformCursorOpen(PlannedStmt *stmt, ParamListInfo params,
 
 	Assert(portal->strategy == PORTAL_ONE_SELECT);
 
-	if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+	if (PortalIsParallelRetrieve())
 	{
 		WaitEndpointReady(portal->queryDesc->estate);
 	}
@@ -212,8 +212,7 @@ PerformPortalFetch(FetchStmt *stmt,
 		return;					/* keep compiler happy */
 	}
 
-	bool is_parallel_retrieve = (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) > 0 ;
-	if (is_parallel_retrieve)
+	if (PortalIsParallelRetrieve())
 	{
 		if (stmt->ismove)
 		{

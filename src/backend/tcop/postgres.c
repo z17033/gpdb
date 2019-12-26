@@ -3854,7 +3854,7 @@ ProcessInterrupts(const char* filename, int lineno)
 			if (Gp_role == GP_ROLE_EXECUTE)
 				ereport(ERROR,
 						(errcode(ERRCODE_GP_OPERATION_CANCELED),
-						 errmsg("canceling MPP operation%s", cancel_msg_str.data)));
+						 errmsg("canceling MPP operation %s", cancel_msg_str.data)));
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_QUERY_CANCELED),

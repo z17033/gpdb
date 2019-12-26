@@ -1066,8 +1066,8 @@ shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile * ptr,
 		pid_t		pid;
 		bool		detached;
 
-        if (QueryFinishPending)
-            break;
+		if (QueryFinishPending)
+			break;
 
 		/* Acquire the lock just long enough to check the pointer. */
 		SpinLockAcquire(&mq->mq_mutex);

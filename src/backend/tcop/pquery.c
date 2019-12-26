@@ -235,7 +235,7 @@ ProcessQuery(Portal portal,
 									GP_INSTRUMENT_OPTS);
 	queryDesc->ddesc = portal->ddesc;
 
-	if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+	if (PortalIsParallelRetrieve())
 		queryDesc->parallel_retrieve_cursor = true;
 
 	if (gp_enable_gpperfmon && Gp_role == GP_ROLE_DISPATCH)
@@ -698,7 +698,7 @@ PortalStart(Portal portal, ParamListInfo params,
 					queryDesc->portal_name = (portal->name ? pstrdup(portal->name) : (char *) NULL);
 				}
 
-				if (portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE)
+				if (PortalIsParallelRetrieve())
 				{
 					if (queryDesc->ddesc == NULL)
 						queryDesc->ddesc = makeNode(QueryDispatchDesc);

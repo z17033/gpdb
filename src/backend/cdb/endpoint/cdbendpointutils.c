@@ -254,7 +254,6 @@ static bool
 check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 {
 	bool		retVal = false;
-	bool		isParallelRetrieve = false;
 	Portal		portal;
 	EState *estate = NULL;
 
@@ -266,9 +265,7 @@ check_parallel_retrieve_cursor(const char *cursorName, bool isWait)
 			errmsg("cursor \"%s\" does not exist", cursorName)));
 		return false;			/* keep compiler happy */
 	}
-	isParallelRetrieve =
-		(portal->cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) > 0;
-	if (!isParallelRetrieve)
+	if (!PortalIsParallelRetrieve())
 	{
 		ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
