@@ -214,7 +214,7 @@ gp_check_parallel_retrieve_cursor(PG_FUNCTION_ARGS)
 {
 	const char *cursorName = NULL;
 
-	cursorName = PG_GETARG_CSTRING(0);
+	cursorName = text_to_cstring(PG_GETARG_TEXT_P(0));
 
 	PG_RETURN_BOOL(check_parallel_retrieve_cursor(cursorName, false));
 }
@@ -232,7 +232,7 @@ gp_wait_parallel_retrieve_cursor(PG_FUNCTION_ARGS)
 {
 	const char *cursorName = NULL;
 
-	cursorName = PG_GETARG_CSTRING(0);
+	cursorName = text_to_cstring(PG_GETARG_TEXT_P(0));
 
 	PG_RETURN_BOOL(check_parallel_retrieve_cursor(cursorName, true));
 }

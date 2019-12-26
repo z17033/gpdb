@@ -154,9 +154,9 @@
 
  CREATE FUNCTION gp_endpoints_status_info(OUT token text, OUT databaseid int4, OUT senderpid int4, OUT receiverpid int4, OUT status text, OUT dbid int4, OUT sessionid int4, OUT userid oid, OUT endpointname text, OUT cursorname text) RETURNS SETOF record LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_endpoints_status_info' WITH (OID=7179, DESCRIPTION="endpoints status information");
 
- CREATE FUNCTION gp_check_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_check_parallel_retrieve_cursor' WITH (OID=7180, DESCRIPTION="check whether all endpoint of this parallel retrieve cursor has been retrieved finished ");
+ CREATE FUNCTION gp_check_parallel_retrieve_cursor(IN cursorname text, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_check_parallel_retrieve_cursor' WITH (OID=7180, DESCRIPTION="check whether all endpoint of this parallel retrieve cursor has been retrieved finished ");
  
- CREATE FUNCTION gp_wait_parallel_retrieve_cursor(IN cursorname cstring, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_wait_parallel_retrieve_cursor' WITH (OID=7181, DESCRIPTION="wait until all endpoint of this parallel retrieve cursor has been retrieved finished ");
+ CREATE FUNCTION gp_wait_parallel_retrieve_cursor(IN cursorname text, OUT finished bool) RETURNS bool LANGUAGE internal VOLATILE EXECUTE ON ANY AS 'gp_wait_parallel_retrieve_cursor' WITH (OID=7181, DESCRIPTION="wait until all endpoint of this parallel retrieve cursor has been retrieved finished ");
 
 -- the bitmap index access method routines
  CREATE FUNCTION bmhandler(internal) RETURNS index_am_handler LANGUAGE internal VOLATILE STRICT PARALLEL SAFE AS 'bmhandler' WITH (OID=7050, DESCRIPTION="bitmap(internal)");
