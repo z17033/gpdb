@@ -674,7 +674,7 @@ DECLARE
 0Uq: ... <quitting>
 -- check it can cancel the "gp_wait_parallel_retrieve_cursor"
 1<:  <... completed>
-ERROR:  Error on receive from seg0 10.34.50.67:25432 pid=12603: server closed the connection unexpectedly
+ERROR:  Error on receive from seg0 10.34.50.67:25432 pid=12603: server closed the connection unexpectedly (cdbdispatchresult.c:487)
 DETAIL:  
 	This probably means the server terminated abnormally
 	before or while processing the request.

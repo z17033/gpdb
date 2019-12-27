@@ -275,8 +275,9 @@ start_retrieve(const char * endpointName)
 		MemSet(&ctl, 0, sizeof(ctl));
 		ctl.keysize = NAMEDATALEN;
 		ctl.entrysize = sizeof(MsgQueueStatusEntry);
+		ctl.hash = string_hash;
 		mqStatusHTB = hash_create("endpoint hash", MAX_ENDPOINT_SIZE, &ctl,
-								  (HASH_ELEM | HASH_BLOBS));
+								  (HASH_ELEM | HASH_FUNCTION));
 	}
 
 	entry = hash_search(mqStatusHTB, endpointName, HASH_ENTER, &isFound);
