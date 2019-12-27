@@ -181,7 +181,7 @@ DETAIL:  An endpoint can only be attached by one retrieving session.
 -- Now check on c1 will trigger the error, all endpoints should be aborted since the transaction
 -- will be terminated.
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
-ERROR:  canceling MPP operation : "Endpoint retrieve session quit, all unfinished endpoint backends will be cancelled"  (seg0 127.0.0.1:25432 pid=231244)
+ERROR:  canceling MPP operation: "Endpoint retrieve session quit, all unfinished endpoint backends will be cancelled"  (seg0 127.0.0.1:25432 pid=231244)
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c2');
 ERROR:  current transaction is aborted, commands ignored until end of transaction block
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c3');

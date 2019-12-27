@@ -63,6 +63,8 @@ typedef struct MsgQueueStatusEntry
 {
 	/* The name of endpoint to be retrieved, also behave as hash key */
 	char		endpointName[NAMEDATALEN];
+	/* The endpoint to be retrieved */
+	Endpoint    endpoint;
 	/* The dsm handle which contains shared memory message queue */
 	dsm_segment *mqSeg;
 	/* Shared memory message queue */
@@ -80,13 +82,15 @@ typedef struct MsgQueueStatusEntry
 static HTAB *mqStatusHTB = NULL;
 static MsgQueueStatusEntry *currentMQEntry = NULL;
 
-static MsgQueueStatusEntry * start_retrieve(const char * endpointName);
-static void validate_retrieve_endpoint(Endpoint endpointDesc, const char* endpointName);
+static void init_msg_queue_status_entry(MsgQueueStatusEntry *entry);
+static Endpoint get_endpoint_from_mq_status_entry(MsgQueueStatusEntry *entry);
+static MsgQueueStatusEntry *start_retrieve(const char *endpointName);
+static void validate_retrieve_endpoint(Endpoint endpointDesc, const char *endpointName);
 static void finish_retrieve(MsgQueueStatusEntry *entry, bool resetPID);
-static void attach_receiver_mq(MsgQueueStatusEntry * entry, dsm_handle dsmHandle);
-static void detach_receiver_mq(MsgQueueStatusEntry * entry);
-static void notify_sender(MsgQueueStatusEntry * entry, bool isFinished);
-static void retrieve_cancel_action(const char *endpointName, char *msg);
+static void attach_receiver_mq(MsgQueueStatusEntry *entry, dsm_handle dsmHandle);
+static void detach_receiver_mq(MsgQueueStatusEntry *entry);
+static void notify_sender(MsgQueueStatusEntry *entry, bool isFinished);
+static void retrieve_cancel_action(MsgQueueStatusEntry *entry, char *msg);
 static void retrieve_exit_callback(int code, Datum arg);
 static void retrieve_xact_abort_callback(XactEvent ev, void *vp);
 static void retrieve_subxact_abort_callback(SubXactEvent event,
@@ -94,7 +98,7 @@ static void retrieve_subxact_abort_callback(SubXactEvent event,
 								SubTransactionId parentSubid,
 								void *arg);
 static TupleDesc read_tuple_desc_info(shm_toc *toc);
-static TupleTableSlot *receive_tuple_slot(MsgQueueStatusEntry * entry);
+static TupleTableSlot *receive_tuple_slot(MsgQueueStatusEntry *entry);
 
 /*
  * AuthEndpoint - authenticate for retrieve role connection.
@@ -207,6 +211,42 @@ ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
 }
 
 /*
+ * init_msg_queue_status_entry
+ *
+ * If endpoint not retrieved before, init the new entry
+ */
+static void
+init_msg_queue_status_entry(MsgQueueStatusEntry *entry)
+{
+	entry->mqSeg      = NULL;
+	entry->endpoint   = NULL;
+	entry->mqHandle   = NULL;
+	entry->retrieveTs = NULL;
+	entry->retrieveStatus = RETRIEVE_STATUS_INIT;
+}
+
+/*
+ * get_endpoint_from_mq_status_entry
+ *
+ * Get endpoint from the entry if exists and validate the endpoint slot
+ * still belong to current entry since it may get reused by other endpoint.
+ * ParallelCursorEndpointLock shout be acquired before calling this function.
+ */
+static Endpoint
+get_endpoint_from_mq_status_entry(MsgQueueStatusEntry *entry)
+{
+	if (entry->endpoint) {
+		if (endpoint_name_equals(entry->endpoint->name, entry->endpointName) &&
+			EndpointCtl.sessionID == entry->endpoint->sessionID) {
+			return entry->endpoint;
+		}
+		elog(DEBUG3, "CDB_ENDPOINTS: exists endpoint slot in MsgQueueStatusEntry is reused by other");
+		entry->endpoint = NULL;
+	}
+	return NULL;
+}
+
+/*
  * start_retrieve - start to retrieve a endpoint.
  *
  * Initialize current retrieve MsgQueueStatusEntry for the given
@@ -235,22 +275,23 @@ start_retrieve(const char * endpointName)
 		MemSet(&ctl, 0, sizeof(ctl));
 		ctl.keysize = NAMEDATALEN;
 		ctl.entrysize = sizeof(MsgQueueStatusEntry);
-		ctl.hash = string_hash;
 		mqStatusHTB = hash_create("endpoint hash", MAX_ENDPOINT_SIZE, &ctl,
-		                          (HASH_ELEM | HASH_FUNCTION));
+								  (HASH_ELEM | HASH_BLOBS));
 	}
 
 	entry = hash_search(mqStatusHTB, endpointName, HASH_ENTER, &isFound);
 	if (!isFound)
 	{
-		// If endpoint not retrieved before, init the new entry
-		entry->mqSeg      = NULL;
-		entry->mqHandle   = NULL;
-		entry->retrieveTs = NULL;
-		entry->retrieveStatus = RETRIEVE_STATUS_INIT;
+		init_msg_queue_status_entry(entry);
 	}
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-	endpointDesc = find_endpoint(endpointName, EndpointCtl.sessionID);
+	if (entry->endpoint)
+		endpointDesc = get_endpoint_from_mq_status_entry(entry);
+	else
+	{
+		endpointDesc = find_endpoint(endpointName, EndpointCtl.sessionID);
+		entry->endpoint = endpointDesc;
+	}
 	if (!endpointDesc)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -322,7 +363,7 @@ validate_retrieve_endpoint(Endpoint endpointDesc, const char* endpointName)
  * Attach to the endpoint's shared memory message queue.
  */
 static void
-attach_receiver_mq(MsgQueueStatusEntry * entry, dsm_handle dsmHandle)
+attach_receiver_mq(MsgQueueStatusEntry *entry, dsm_handle dsmHandle)
 {
 	TupleDesc	td;
 	dsm_segment *dsmSeg = NULL;
@@ -374,7 +415,7 @@ attach_receiver_mq(MsgQueueStatusEntry * entry, dsm_handle dsmHandle)
  * Detach from the endpoint's message queue.
  */
 static void
-detach_receiver_mq(MsgQueueStatusEntry * entry)
+detach_receiver_mq(MsgQueueStatusEntry *entry)
 {
 	Assert(entry);
 	Assert(entry->mqSeg);
@@ -393,12 +434,13 @@ detach_receiver_mq(MsgQueueStatusEntry * entry)
  * Notify the sender to stop waiting on the ackDone latch.
  */
 static void
-notify_sender(MsgQueueStatusEntry * entry, bool isFinished)
+notify_sender(MsgQueueStatusEntry *entry, bool isFinished)
 {
 	EndpointDesc *endpoint;
+	Assert(entry);
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_SHARED);
-	endpoint = find_endpoint(entry->endpointName, EndpointCtl.sessionID);
+	endpoint = get_endpoint_from_mq_status_entry(entry);
 	if (endpoint == NULL)
 	{
 		LWLockRelease(ParallelCursorEndpointLock);
@@ -441,7 +483,7 @@ read_tuple_desc_info(shm_toc *toc)
  * When read all tuples, should tell endpoint/sender that the retrieve is done.
  */
 static TupleTableSlot *
-receive_tuple_slot(MsgQueueStatusEntry * entry)
+receive_tuple_slot(MsgQueueStatusEntry *entry)
 {
 	TupleTableSlot *result = NULL;
 	HeapTuple	tup = NULL;
@@ -539,9 +581,10 @@ finish_retrieve(MsgQueueStatusEntry *entry, bool resetPID)
 	EndpointDesc *endpoint = NULL;
 
 	Assert(EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_RECEIVER);
+	Assert(entry);
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-	endpoint = find_endpoint(entry->endpointName, EndpointCtl.sessionID);
+	endpoint = get_endpoint_from_mq_status_entry(entry);
 	if (endpoint == NULL)
 	{
 		/*
@@ -597,8 +640,11 @@ finish_retrieve(MsgQueueStatusEntry *entry, bool resetPID)
  * happened.
  */
 static void
-retrieve_cancel_action(const char *endpointName, char *msg)
+retrieve_cancel_action(MsgQueueStatusEntry *entry, char *msg)
 {
+	Endpoint endpoint;
+
+	Assert(entry);
 	/*
 	 * If current role is not receiver, the retrieve must already finished
 	 * success or get cleaned before.
@@ -610,19 +656,18 @@ retrieve_cancel_action(const char *endpointName, char *msg)
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 
-	EndpointDesc *endpointDesc =
-	find_endpoint(endpointName, EndpointCtl.sessionID);
+	endpoint = get_endpoint_from_mq_status_entry(entry);
 
-	if (endpointDesc && endpointDesc->receiverPid == MyProcPid &&
-		endpointDesc->attachStatus != Status_Finished)
+	if (endpoint && endpoint->receiverPid == MyProcPid &&
+		endpoint->attachStatus != Status_Finished)
 	{
-		endpointDesc->receiverPid = InvalidPid;
-		endpointDesc->attachStatus = Status_Released;
-		if (endpointDesc->senderPid != InvalidPid)
+		endpoint->receiverPid = InvalidPid;
+		endpoint->attachStatus = Status_Released;
+		if (endpoint->senderPid != InvalidPid)
 		{
 			elog(DEBUG3, "CDB_ENDPOINT: signal sender to abort");
-			SetBackendCancelMessage(endpointDesc->senderPid, msg);
-			kill(endpointDesc->senderPid, SIGINT);
+			SetBackendCancelMessage(endpoint->senderPid, msg);
+			kill(endpoint->senderPid, SIGINT);
 		}
 	}
 
@@ -686,9 +731,9 @@ retrieve_exit_callback(int code, Datum arg)
 	{
 		if (entry->retrieveStatus != RETRIEVE_STATUS_FINISH)
 			retrieve_cancel_action(
-								   entry->endpointName,
-								   "Endpoint retrieve session quit, "
-					   "all unfinished endpoint backends will be cancelled");
+				entry,
+				"Endpoint retrieve session quit, "
+				"all unfinished endpoint backends will be cancelled");
 		if (entry->mqSeg)
 		{
 			/* It could have been detached already when finish. */
@@ -718,7 +763,7 @@ retrieve_xact_abort_callback(XactEvent ev, void *vp)
 			EndpointCtl.sessionID != InvalidSession && currentMQEntry)
 		{
 			if (currentMQEntry->retrieveStatus != RETRIEVE_STATUS_FINISH)
-				retrieve_cancel_action(currentMQEntry->endpointName,
+				retrieve_cancel_action(currentMQEntry,
 									   "Endpoint retrieve statement aborted");
 			finish_retrieve(currentMQEntry, true);
 		}
