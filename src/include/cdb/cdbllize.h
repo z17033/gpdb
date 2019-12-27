@@ -21,9 +21,9 @@
 #include "nodes/relation.h"
 
 extern Path *create_motion_for_top_plan(PlannerInfo *root, Path *best_path,
-										bool *needToAssignDirectDispatchContentIds, int cursorOptions);
+										bool *needToAssignDirectDispatchContentIds, bool isParalleCursor);
 
-extern Plan *cdbparallelize(struct PlannerInfo *root, Plan *plan, int cursorOptions);
+extern Plan *cdbparallelize(struct PlannerInfo *root, Plan *plan, bool isParalleCursor);
 
 extern bool is_plan_node(Node *node);
 

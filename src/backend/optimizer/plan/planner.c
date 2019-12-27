@@ -264,6 +264,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	instr_time		endtime;
 	MemoryAccountIdType curMemoryAccountId;
 	bool		needToAssignDirectDispatchContentIds = false;
+	bool        isParalleCursor = false;
 
 	/*
 	 * Use ORCA only if it is enabled and we are in a master QD process.
@@ -444,9 +445,13 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 	best_path = get_cheapest_fractional_path(final_rel, tuple_fraction);
 
+	if ((cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE) != 0)
+		isParalleCursor = true;
+
 	if (Gp_role == GP_ROLE_DISPATCH)
 		best_path = create_motion_for_top_plan(root, best_path,
-											   &needToAssignDirectDispatchContentIds, cursorOptions);
+											   &needToAssignDirectDispatchContentIds,
+											   isParalleCursor);
 
 	top_plan = create_plan(root, best_path);
 
@@ -562,7 +567,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	if (Gp_role == GP_ROLE_DISPATCH)
 	{
-		top_plan = cdbparallelize(root, top_plan, cursorOptions);
+		top_plan = cdbparallelize(root, top_plan, isParalleCursor);
 
 		/*
 		 * cdbparallelize() mutates all the nodes, so the producer nodes we

@@ -273,7 +273,7 @@ get_partitioned_policy_from_path(PlannerInfo *root, Path *path)
  * *needToAssignDirectDispatchContentIds is set to true.
  */
 Path *
-create_motion_for_top_plan(PlannerInfo *root, Path *best_path, bool *needToAssignDirectDispatchContentIds, int cursorOptions)
+create_motion_for_top_plan(PlannerInfo *root, Path *best_path, bool *needToAssignDirectDispatchContentIds, bool isParalleCursor)
 {
 	Query	   *query = root->parse;
 	GpPolicy   *targetPolicy = NULL;
@@ -469,7 +469,7 @@ create_motion_for_top_plan(PlannerInfo *root, Path *best_path, bool *needToAssig
 	else if (query->commandType == CMD_SELECT)
 	{
 		Assert(query->parentStmtType == PARENTSTMTTYPE_NONE);
-		if (!(cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE))
+		if (!isParalleCursor)
 			bringResultToDispatcher = true;
 		*needToAssignDirectDispatchContentIds = root->config->gp_enable_direct_dispatch;
 	}
@@ -574,7 +574,7 @@ create_motion_for_top_plan(PlannerInfo *root, Path *best_path, bool *needToAssig
  * ------------------------------------------------------------------------- *
  */
 Plan *
-cdbparallelize(PlannerInfo *root, Plan *plan, int cursorOptions)
+cdbparallelize(PlannerInfo *root, Plan *plan, bool isParalleCursor)
 {
 	PlanProfile profile;
 	PlanProfile *context = &profile;
@@ -690,7 +690,7 @@ cdbparallelize(PlannerInfo *root, Plan *plan, int cursorOptions)
 	 * processes.
 	 */
 	if (context->dispatchParallel || context->anyInitPlanParallel)
-		plan = apply_motion(root, plan, cursorOptions);
+		plan = apply_motion(root, plan, isParalleCursor);
 	/*
 	 * Mark the root plan to DISPATCH_PARALLEL if prescan() says it is
 	 * parallel. Each init plan has its own flag to indicate
@@ -701,7 +701,7 @@ cdbparallelize(PlannerInfo *root, Plan *plan, int cursorOptions)
 	 * may not need dispatch to QEs. But for PARALLEL RETRIEVE CURSOR, we dispatch
 	 * these plans to entry DB.
 	 */
-	if (context->dispatchParallel || (cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE))
+	if (context->dispatchParallel || isParalleCursor)
 		plan->dispatch = DISPATCH_PARALLEL;
 
 	if (context->anyInitPlanParallel)

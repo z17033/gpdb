@@ -858,6 +858,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	CmdType		operation;
 	DestReceiver *dest;
 	bool		sendTuples;
+	bool        isParallelRetrieveSender;
 	MemoryContext oldcontext;
 	DestReceiver *endpointDest		= NULL;
 	/*
@@ -878,6 +879,8 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	Assert(NULL != queryDesc->plannedstmt && MEMORY_OWNER_TYPE_Undefined != queryDesc->memoryAccountId);
 
 	START_MEMORY_ACCOUNT(queryDesc->memoryAccountId);
+
+	isParallelRetrieveSender = GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER;
 
 	/*
 	 * Switch into per-query memory context
@@ -986,7 +989,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 			 * For the scenario: endpoint on QE, the query plan is changed,
 			 * the root slice also exists on QE.
 			 */
-			if (GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER)
+			if (isParallelRetrieveSender)
 			{
 				endpointDest = CreateTQDestReceiverForEndpoint(
 					queryDesc->tupDesc, queryDesc->ddesc->parallelCursorName);
@@ -1004,10 +1007,10 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 						queryDesc->planstate,
 						queryDesc->plannedstmt->parallelModeNeeded,
 						operation,
-						(GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER ? true : sendTuples),
+						(isParallelRetrieveSender ? true : sendTuples),
 						count,
 						direction,
-						(GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER? endpointDest : dest));
+						(isParallelRetrieveSender? endpointDest : dest));
 		}
 		else
 		{
@@ -1072,8 +1075,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	/*
 	 * shutdown tuple receiver, if we started it
 	 */
-	if (GetParallelRtrvCursorExecRole() == PARALLEL_RETRIEVE_SENDER
-			&& endpointDest != NULL)
+	if (isParallelRetrieveSender && endpointDest != NULL)
 	{
 		DestroyTQDestReceiverForEndpoint(endpointDest);
 	}

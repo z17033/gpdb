@@ -179,7 +179,7 @@ directDispatchCalculateHash(Plan *plan, GpPolicy *targetPolicy, Oid *hashfuncs)
  * -------------------------------------------------------------------------
  */
 Plan *
-apply_motion(PlannerInfo *root, Plan *plan, int cursorOptions)
+apply_motion(PlannerInfo *root, Plan *plan, bool isParalleCursor)
 {
 	Query	   *query = root->parse;
 	Plan	   *result;
@@ -266,7 +266,7 @@ apply_motion(PlannerInfo *root, Plan *plan, int cursorOptions)
 			{
 				case FLOW_SINGLETON:
 					/* PARALLEL RETRIEVE CURSOR without sort clause has no motion between QD and QEs */
-					if (!(cursorOptions & CURSOR_OPT_PARALLEL_RETRIEVE))
+					if (!isParalleCursor)
 						subplan = focusPlan(subplan, false);
 					break;
 				case FLOW_REPLICATED:
