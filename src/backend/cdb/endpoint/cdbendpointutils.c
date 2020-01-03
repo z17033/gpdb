@@ -310,7 +310,6 @@ check_parallel_cursor_errors(EState *estate)
 		Assert(qeError);
 		estate->dispatcherState = NULL;
 		cdbdisp_cancelDispatch(ds);
-		cdbdisp_destroyDispatcherState(ds);
 		ReThrowError(qeError);
 	}
 }

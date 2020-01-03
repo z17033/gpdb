@@ -287,51 +287,6 @@ GetParallelCursorEndpointPosition(const struct Plan *planTree)
 }
 
 /*
- * ChooseEndpointContentIDForParallelCursor - choose endpoints position base on
- * plan.
- *
- * Base on different condition, we need figure out which
- * segments that endpoints should be allocated in.
- */
-List *
-ChooseEndpointContentIDForParallelCursor(const struct Plan *planTree,
-										 enum EndPointExecPosition * position)
-{
-	List	   *cids = NIL;
-
-	*position = GetParallelCursorEndpointPosition(planTree);
-	switch (*position)
-	{
-		case ENDPOINT_ON_ENTRY_DB:
-			{
-				cids = list_make1_int(MASTER_CONTENT_ID);
-				break;
-			}
-		case ENDPOINT_ON_SINGLE_QE:
-			{
-				cids = list_make1_int(gp_session_id % planTree->flow->numsegments);
-				break;
-			}
-		case ENDPOINT_ON_SOME_QE:
-			{
-				ListCell   *cell;
-
-				foreach(cell, planTree->directDispatch.contentIds)
-				{
-					int			contentid = lfirst_int(cell);
-
-					cids = lappend_int(cids, contentid);
-				}
-				break;
-			}
-		case ENDPOINT_ON_ALL_QE:
-		default:
-			break;
-	}
-	return cids;
-}
-
-/*
  * WaitEndpointReady - wait until the PARALLEL RETRIEVE CURSOR ready for retrieve
  *
  * On QD, after dispatch the plan to QEs, QD will wait for QEs' ENDPOINT_READY

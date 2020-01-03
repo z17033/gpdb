@@ -79,8 +79,6 @@ extern void EndpointCTXShmemInit(void);
  */
 extern enum EndPointExecPosition GetParallelCursorEndpointPosition(
 								  const struct Plan *planTree);
-extern List *ChooseEndpointContentIDForParallelCursor(
-		  const struct Plan *planTree, enum EndPointExecPosition *position);
 extern void WaitEndpointReady(EState *estate);
 
 /*

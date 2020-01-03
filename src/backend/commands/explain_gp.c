@@ -2425,8 +2425,10 @@ explain_partition_selector(PartitionSelector *ps, PlanState *parentstate,
  */
 void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 {
+	Plan *planTree;
 	int	cursorOptions = 0;
 
+	planTree = queryDesc->plannedstmt->planTree;
 	if (queryDesc->utilitystmt && IsA(queryDesc->utilitystmt, DeclareCursorStmt))
 		cursorOptions |= ((DeclareCursorStmt *) queryDesc->utilitystmt)->options;
 
@@ -2434,11 +2436,11 @@ void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 	{
 		StringInfoData            endpointInfoStr;
 		enum EndPointExecPosition endPointExecPosition;
-		List *cids;
 
 		initStringInfo(&endpointInfoStr);
-		cids = ChooseEndpointContentIDForParallelCursor(
-			queryDesc->plannedstmt->planTree, &endPointExecPosition);
+
+		endPointExecPosition =
+			GetParallelCursorEndpointPosition(planTree);
 		ExplainOpenGroup("Cursor", "Cursor", true, es);
 		switch(endPointExecPosition)
 		{
@@ -2448,14 +2450,21 @@ void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 				break;
 			}
 			case ENDPOINT_ON_SINGLE_QE:
+			{
+				appendStringInfo(
+					&endpointInfoStr, "\"on segment: contentid [%d]\"",
+					gp_session_id % planTree->flow->numsegments);
+				break;
+			}
 			case ENDPOINT_ON_SOME_QE:
 			{
 				ListCell * cell;
 				bool isFirst = true;
 				appendStringInfo(&endpointInfoStr, "on segments: contentid [");
-				foreach(cell, cids)
+				foreach(cell, planTree->directDispatch.contentIds)
 				{
-					appendStringInfo(&endpointInfoStr, (isFirst)?"%d":", %d", lfirst_int(cell));
+					int			contentid = lfirst_int(cell);
+					appendStringInfo(&endpointInfoStr, (isFirst)?"%d":", %d", contentid);
 					isFirst = false;
 				}
 				appendStringInfo(&endpointInfoStr, "]");
@@ -2472,7 +2481,6 @@ void ExplainParallelRetrieveCursor(ExplainState *es, QueryDesc* queryDesc)
 			}
 		}
 		ExplainPropertyText("Endpoint", endpointInfoStr.data, es);
-		list_free(cids);
 		ExplainCloseGroup("Cursor", "Cursor", true, es);
 	}
 }
