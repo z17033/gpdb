@@ -230,8 +230,6 @@ typedef struct TMGXACTLOCAL
 	/* Used on QE, indicates the transaction applies one-phase commit protocol */
 	bool						isOnePhaseCommit;
 
-	bool						badPrepareGangs;
-
 	bool						writerGangLost;
 
 	Bitmapset					*twophaseSegmentsMap;
@@ -259,7 +257,6 @@ typedef struct TMGALLXACTSTATUS
 #define DTM_DEBUG3 (Debug_print_full_dtm ? LOG : DEBUG3)
 #define DTM_DEBUG5 (Debug_print_full_dtm ? LOG : DEBUG5)
 
-extern volatile bool *shmDtmStarted;
 extern int max_tm_gxacts;
 
 extern DtxContext DistributedTransactionContext;
@@ -335,7 +332,7 @@ extern void UtilityModeCloseDtmRedoFile(void);
 extern bool currentDtxDispatchProtocolCommand(DtxProtocolCommand dtxProtocolCommand, bool raiseError);
 extern bool doDispatchSubtransactionInternalCmd(DtxProtocolCommand cmdType);
 extern bool doDispatchDtxProtocolCommand(DtxProtocolCommand dtxProtocolCommand, char *gid,
-							 bool *badGangs, bool raiseError, List *twophaseSegments,
+							 bool raiseError, List *twophaseSegments,
 							 char *serializedDtxContextInfo, int serializedDtxContextInfoLen);
 
 extern void markCurrentGxactWriterGangLost(void);
@@ -343,8 +340,7 @@ extern void markCurrentGxactWriterGangLost(void);
 extern bool currentGxactWriterGangLost(void);
 
 extern void addToGxactTwophaseSegments(struct Gang* gp);
-
-extern void ClearTransactionState(TransactionId latestXid);
+extern bool CurrentDtxIsRollingback(void);
 
 extern void DtxRecoveryMain(Datum main_arg);
 extern bool DtxRecoveryStartRule(Datum main_arg);

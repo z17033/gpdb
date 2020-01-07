@@ -224,11 +224,9 @@ static GpDistributionData *InitDistributionData(CopyState cstate, EState *estate
 static void FreeDistributionData(GpDistributionData *distData);
 static void InitCopyFromDispatchSplit(CopyState cstate, GpDistributionData *distData, EState *estate);
 static Bitmapset *GetTargetKeyCols(Oid relid, PartitionNode *children, Bitmapset *needed_cols, bool distkeys, EState *estate);
-static GpDistributionData *GetDistributionPolicyForPartition(CopyState cstate,
-								  EState *estate,
-								  GpDistributionData *mainDistData,
-								  TupleDesc tupDesc,
-								  Datum *values, bool *nulls);
+static GpDistributionData *GetDistributionPolicyForPartition(GpDistributionData *mainDistData,
+															 ResultRelInfo *resultRelInfo,
+															 MemoryContext context);
 static unsigned int
 GetTargetSeg(GpDistributionData *distData, Datum *baseValues, bool *baseNulls);
 static ProgramPipes *open_program_pipes(char *command, bool forwrite);
@@ -1824,6 +1822,8 @@ BeginCopy(bool is_from,
 	CopyState	cstate;
 	int			num_phys_attrs;
 	MemoryContext oldcontext;
+	bool is_copy = true;
+	int num_columns = 0;
 
 	/* Allocate workspace and zero all fields */
 	cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
@@ -1842,10 +1842,20 @@ BeginCopy(bool is_from,
 
 	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
 
+	/*
+	 * Since external scan calls BeginCopyFrom to init CopyStateData.
+	 * Current relation may be an external relation.
+	 */
+	if (rel != NULL && RelationIsExternal(rel))
+	{
+		is_copy = false;
+		num_columns = rel->rd_att->natts;
+	}
+
 	/* Extract options from the statement node tree */
 	ProcessCopyOptions(cstate, is_from, options,
-					   0, /* pass correct value when COPY supports no delim */
-					   true);
+					   num_columns, /* pass correct value when COPY supports no delim */
+					   is_copy);
 
 
 	/* Process the source/target relation or query */
@@ -2143,22 +2153,22 @@ BeginCopy(bool is_from,
 	 *
 	 * In COPY_EXECUTE mode, the dispatcher has already done the conversion.
 	 */
-  if (cstate->dispatch_mode != COPY_DISPATCH)
-  {
-	cstate->need_transcoding =
-		((cstate->file_encoding != GetDatabaseEncoding() ||
-		  pg_database_encoding_max_length() > 1));
-	/* See Multibyte encoding comment above */
-	cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
-	setEncodingConversionProc(cstate, cstate->file_encoding, !is_from);
-  }
-  else
-  {
-	  cstate->need_transcoding = false;
-	  cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
-  }
+	if (cstate->dispatch_mode != COPY_DISPATCH)
+	{
+		cstate->need_transcoding =
+			((cstate->file_encoding != GetDatabaseEncoding() ||
+			  pg_database_encoding_max_length() > 1));
+		/* See Multibyte encoding comment above */
+		cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
+		setEncodingConversionProc(cstate, cstate->file_encoding, !is_from);
+	}
+	else
+	{
+		cstate->need_transcoding = false;
+		cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
+	}
 
-	cstate->copy_dest = COPY_FILE;		/* default */
+	cstate->copy_dest = COPY_FILE;	/* default */
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -4037,7 +4047,6 @@ CopyFrom(CopyState cstate)
 
 				estate->es_result_relation_info = resultRelInfo;
 			}
-			MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 			ExecStoreVirtualTuple(baseSlot);
 
@@ -4046,27 +4055,30 @@ CopyFrom(CopyState cstate)
 			 *
 			 * The resulting tuple is stored in 'slot'
 			 */
-			slot = reconstructMatchingTupleSlot(baseSlot, resultRelInfo);
+			MemoryContextSwitchTo(estate->es_query_cxt);
+			slot = reconstructPartitionTupleSlot(baseSlot, resultRelInfo);
+			MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 			if (cstate->dispatch_mode == COPY_DISPATCH)
 			{
 				/* In QD, compute the target segment to send this row to. */
 				part_distData = GetDistributionPolicyForPartition(
-					cstate, estate,
-					distData,
-					tupDesc,
-					slot_get_values(slot), slot_get_isnull(slot));
+																  distData,
+																  resultRelInfo,
+																  cstate->copycontext);
 
 				target_seg = GetTargetSeg(part_distData, slot_get_values(slot), slot_get_isnull(slot));
 			}
 			else if (is_check_distkey)
 			{
-				/* In COPY FROM ON SEGMENT, check the distribution key in the QE. */
+				/*
+				 * In COPY FROM ON SEGMENT, check the distribution key in the
+				 * QE.
+				 */
 				part_distData = GetDistributionPolicyForPartition(
-					cstate, estate,
-					distData,
-					tupDesc,
-					slot_get_values(slot), slot_get_isnull(slot));
+																  distData,
+																  resultRelInfo,
+																  cstate->copycontext);
 
 				if (part_distData->policy->nattrs != 0)
 				{
@@ -4190,7 +4202,6 @@ CopyFrom(CopyState cstate)
 				HeapTuple	tuple;
 				if (resultRelInfo->nBufferedTuples == 0)
 					firstBufferedLineNo = cstate->cur_lineno;
-				tuple = ExecFetchSlotHeapTuple(slot);
 
 				resultRelInfoList = list_append_unique_ptr(resultRelInfoList, resultRelInfo);
 				if (resultRelInfo->bufferedTuples == NULL)
@@ -4202,7 +4213,8 @@ CopyFrom(CopyState cstate)
 
 				MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 				/* Add this tuple to the tuple buffer */
-				resultRelInfo->bufferedTuples[resultRelInfo->nBufferedTuples++] = heap_copytuple(tuple);
+				tuple = ExecCopySlotHeapTuple(slot);
+				resultRelInfo->bufferedTuples[resultRelInfo->nBufferedTuples++] = tuple;
 				resultRelInfo->bufferedTuplesSize += tuple->t_len;
 				nTotalBufferedTuples++;
 				totalBufferedTuplesSize += tuple->t_len;
@@ -5621,10 +5633,9 @@ retry:
 
 		resultRelInfo = targetid_get_partition(frame.relid, estate, true);
 		estate->es_result_relation_info = resultRelInfo;
+		slot = reconstructPartitionTupleSlot(baseSlot, resultRelInfo);
 
 		MemoryContextSwitchTo(oldcontext);
-
-		slot = reconstructMatchingTupleSlot(baseSlot, resultRelInfo);
 
 		/* since resultRelInfo has changed, refresh these values */
 		tupDesc = RelationGetDescr(resultRelInfo->ri_RelationDesc);
@@ -6429,18 +6440,24 @@ CopyReadLineText(CopyState cstate)
 					if (c2 == '\n')
 					{
 						if (!cstate->csv_mode)
+						{
+							cstate->raw_buf_index = raw_buf_ptr;
 							ereport(ERROR,
 									(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 									 errmsg("end-of-copy marker does not match previous newline style")));
+						}
 						else
 							NO_END_OF_COPY_GOTO;
 					}
 					else if (c2 != '\r')
 					{
 						if (!cstate->csv_mode)
+						{
+							cstate->raw_buf_index = raw_buf_ptr;
 							ereport(ERROR,
 									(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 									 errmsg("end-of-copy marker corrupt")));
+						}
 						else
 							NO_END_OF_COPY_GOTO;
 					}
@@ -6454,9 +6471,12 @@ CopyReadLineText(CopyState cstate)
 				if (c2 != '\r' && c2 != '\n')
 				{
 					if (!cstate->csv_mode)
+					{
+						cstate->raw_buf_index = raw_buf_ptr;
 						ereport(ERROR,
 								(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 								 errmsg("end-of-copy marker corrupt")));
+					}
 					else
 						NO_END_OF_COPY_GOTO;
 				}
@@ -6465,6 +6485,7 @@ CopyReadLineText(CopyState cstate)
 					(cstate->eol_type == EOL_CRNL && c2 != '\n') ||
 					(cstate->eol_type == EOL_CR && c2 != '\r'))
 				{
+					cstate->raw_buf_index = raw_buf_ptr;
 					ereport(ERROR,
 							(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 							 errmsg("end-of-copy marker does not match previous newline style")));
@@ -7757,7 +7778,7 @@ GetTargetKeyCols(Oid relid, PartitionNode *children, Bitmapset *needed_cols,
 	{
 		ResultRelInfo *partrr;
 		GpPolicy *partPolicy;
-		AttrMap	   *map;
+		TupleConversionMap *map;
 
 		partrr = targetid_get_partition(relid, estate, false);
 		map = partrr->ri_partInsertMap;
@@ -7773,12 +7794,8 @@ GetTargetKeyCols(Oid relid, PartitionNode *children, Bitmapset *needed_cols,
 				/* Map this partition's attribute number to the parent's. */
 				if (map)
 				{
-					for (parentAttNum = 1; parentAttNum <= map->attr_count; parentAttNum++)
-					{
-						if (map->attr_map[parentAttNum] == partAttNum)
-							break;
-					}
-					if (parentAttNum > map->attr_count)
+					parentAttNum = map->attrMap[partAttNum - 1];
+					if (parentAttNum > map->indesc->natts)
 						elog(ERROR, "could not find mapping partition distribution key column %d in parent relation",
 							 partAttNum);
 				}
@@ -7807,10 +7824,9 @@ GetTargetKeyCols(Oid relid, PartitionNode *children, Bitmapset *needed_cols,
 
 /* Get distribution policy for specific part */
 static GpDistributionData *
-GetDistributionPolicyForPartition(CopyState cstate, EState *estate,
-								  GpDistributionData *mainDistData,
-                                  TupleDesc tupDesc,
-                                  Datum *values, bool *nulls)
+GetDistributionPolicyForPartition(GpDistributionData *mainDistData,
+								  ResultRelInfo *resultRelInfo,
+								  MemoryContext context)
 {
 
 	/*
@@ -7821,27 +7837,21 @@ GetDistributionPolicyForPartition(CopyState cstate, EState *estate,
 	if (mainDistData->hashmap)
 	{
 		Oid			relid;
-		ResultRelInfo *resultRelInfo;
 		GpDistributionData *d;
 		bool		found;
 
-		resultRelInfo = values_get_partition(values,
-											 nulls,
-											 tupDesc,
-											 estate,
-											 false); /* don't need indices in QD */
 		relid = resultRelInfo->ri_RelationDesc->rd_id;
 
 		d = hash_search(mainDistData->hashmap, &(relid), HASH_ENTER, &found);
 		if (!found)
 		{
-			Relation rel = resultRelInfo->ri_RelationDesc;
+			Relation	rel = resultRelInfo->ri_RelationDesc;
 			MemoryContext oldcontext;
 
 			/*
 			 * Make sure this all persists the current iteration.
 			 */
-			oldcontext = MemoryContextSwitchTo(cstate->copycontext);
+			oldcontext = MemoryContextSwitchTo(context);
 
 			d->cdbHash = makeCdbHashForRelation(rel);
 			d->policy = GpPolicyCopy(rel->rd_cdbpolicy);

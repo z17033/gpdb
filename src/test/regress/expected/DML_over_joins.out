@@ -1698,31 +1698,34 @@ create table tab3 (a int, b int) distributed by (b);
 insert into tab1 values (1, 1);
 insert into tab2 values (1, 1);
 insert into tab3 values (1, 1);
+-- we must not write the WHERE condition as `relname='tab2'`, it matches tables
+-- in all the schemas, which will cause problems in other tests; we should use
+-- the `::regclass` way as it only matches the table in current search_path.
 set allow_system_table_mods=true;
-update pg_class set relpages = 10000 where relname='tab2';
-update pg_class set reltuples = 100000000 where relname='tab2';
-update pg_class set relpages = 100000000 where relname='tab3';
-update pg_class set reltuples = 100000 where relname='tab3';
+update pg_class set relpages = 10000 where oid='tab2'::regclass;
+update pg_class set reltuples = 100000000 where oid='tab2'::regclass;
+update pg_class set relpages = 100000000 where oid='tab3'::regclass;
+update pg_class set reltuples = 100000 where oid='tab3'::regclass;
 -- Planner: there is redistribute motion above tab1, however, we can also
 -- remove the explicit redistribute motion here because the final join
 -- co-locate with the result relation tab1.
 explain (costs off) delete from tab1 using tab2, tab3 where tab1.a = tab2.a and tab1.b = tab3.b;
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Delete on tab1
    ->  Hash Join
-         Hash Cond: (tab1.b = tab3.b)
-         ->  Redistribute Motion 3:3  (slice2; segments: 3)
-               Hash Key: tab1.b
-               ->  Hash Join
-                     Hash Cond: (tab2.a = tab1.a)
-                     ->  Seq Scan on tab2
-                     ->  Hash
-                           ->  Redistribute Motion 3:3  (slice1; segments: 3)
-                                 Hash Key: tab1.a
-                                 ->  Seq Scan on tab1
+         Hash Cond: (tab3.b = tab1.b)
+         ->  Seq Scan on tab3
          ->  Hash
-               ->  Seq Scan on tab3
+               ->  Redistribute Motion 3:3  (slice2; segments: 3)
+                     Hash Key: tab1.b
+                     ->  Hash Join
+                           Hash Cond: (tab2.a = tab1.a)
+                           ->  Seq Scan on tab2
+                           ->  Hash
+                                 ->  Redistribute Motion 3:3  (slice1; segments: 3)
+                                       Hash Key: tab1.a
+                                       ->  Seq Scan on tab1
  Optimizer: Postgres query optimizer
 (15 rows)
 

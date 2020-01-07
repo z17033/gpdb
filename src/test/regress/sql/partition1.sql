@@ -625,18 +625,19 @@ partition bb values ('2008-01-01'),
 partition cc values ('2009-01-01')
 );
 
--- must have name or value for list partition
+-- must have name or value for partition
 alter table hhh_l1 drop partition;
 alter table hhh_l1 drop partition aa;
 alter table hhh_l1 drop partition for ('2008-01-01');
 
--- if not specified, drop first range partition...
+-- same with range partitioning
+alter table hhh_r1 drop partition;
 alter table hhh_r1 drop partition for ('2007-04-01');
-alter table hhh_r1 drop partition;
-alter table hhh_r1 drop partition;
-alter table hhh_r1 drop partition;
-alter table hhh_r1 drop partition;
-alter table hhh_r1 drop partition;
+alter table hhh_r1 drop partition for(rank(1));
+alter table hhh_r1 drop partition aa_2;
+alter table hhh_r1 drop partition aa_3;
+alter table hhh_r1 drop partition aa_5;
+alter table hhh_r1 drop partition aa_6;
 
 -- more add partition tests
 
@@ -1021,6 +1022,36 @@ drop table if exists s1;
 drop table if exists s2;
 -- end_ignore
 
+-- the following case is to test when we have a template
+-- we can correct add new subpartition with relation options.
+create table test_part_relops_tmpl (id int,  p1 text, p2 text, count int)
+distributed by (id)
+partition by list (p1)
+subpartition by list (p2)
+(
+  partition m1 values ('m1')
+  (subpartition l1 values ('l1'),
+   subpartition l2 values ('l2')),
+  partition m2 values ('m2')
+  (subpartition l1 values ('l1'),
+   subpartition l2 values ('l2'))
+);
+
+alter table test_part_relops_tmpl
+set subpartition template
+(
+   subpartition l1 values('l1')
+);
+
+-- previously, we do wrong in the function of `add_partition_rule`
+-- which invokes `transformRelOptions`, and transformRelOptions
+-- may return NULL in some cases. For example, the invokation of
+-- transformRelOptions in add_partition_rule set ignoreOids = true,
+-- so the following statement creates such senario by passing oids options,
+-- then transformRelOptions return NULL and we should correctly handle
+-- null pointers.
+alter table test_part_relops_tmpl alter partition for ('m1') add partition l3 values ('l3')
+with (oids=false);
 
 create table mpp_2914A(id int,  buyDate date, kind char(1))
 DISTRIBUTED BY (id)

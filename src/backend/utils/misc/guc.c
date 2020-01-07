@@ -2277,7 +2277,7 @@ static struct config_int ConfigureNamesInt[] =
 			NULL
 		},
 		&wal_keep_segments,
-		0, 0, INT_MAX,
+		5, 0, INT_MAX,
 		NULL, NULL, NULL
 	},
 
@@ -2409,7 +2409,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS | GUC_SUPERUSER_ONLY
 		},
 		&wal_sender_timeout,
-		60 * 1000, 0, INT_MAX,
+		300 * 1000, 0, INT_MAX,
 		NULL, NULL, NULL
 	},
 

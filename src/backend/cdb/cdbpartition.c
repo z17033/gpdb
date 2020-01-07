@@ -207,7 +207,7 @@ static List *get_partition_rules(PartitionNode *pn);
 static bool
 			relation_has_supers(Oid relid);
 
-static NewConstraint *constraint_apply_mapped(HeapTuple tuple, AttrMap *map, Relation cand,
+static NewConstraint *constraint_apply_mapped(HeapTuple tuple, TupleConversionMap *map, Relation cand,
 						bool validate, Relation pgcon);
 
 static char *ChooseConstraintNameForPartitionCreate(const char *rname,
@@ -956,8 +956,8 @@ cdb_exchange_part_constraints(Relation table,
 	MemoryContext context;
 	MemoryContext oldcontext;
 	ConstraintEntry *entry;
-	AttrMap    *p2t = NULL;
-	AttrMap    *c2t = NULL;
+	TupleConversionMap *p2t = NULL;
+	TupleConversionMap *c2t = NULL;
 
 	HeapTuple	tuple;
 	Form_pg_constraint con;
@@ -1297,7 +1297,7 @@ cdb_exchange_part_constraints(Relation table,
 			 * We need a constraint like the missing one for the part, but
 			 * translated for the candidate.
 			 */
-			AttrMap    *map;
+			TupleConversionMap *map;
 			struct NewConstraint *nc;
 			Form_pg_constraint mcon = (Form_pg_constraint) GETSTRUCT(missing_part_constraint);
 
@@ -1320,7 +1320,7 @@ cdb_exchange_part_constraints(Relation table,
 		 * We need constraints like the missing ones for the whole, but
 		 * translated for the candidate.
 		 */
-		AttrMap    *map;
+		TupleConversionMap *map;
 		struct NewConstraint *nc;
 		ListCell   *lc;
 
@@ -1703,10 +1703,17 @@ add_partition_rule(PartitionRule *rule)
 	values[Anum_pg_partition_rule_parlistvalues - 1] =
 			CStringGetTextDatum(nodeToString(rule->parlistvalues));
 
-	if (rule->parreloptions)
-		values[Anum_pg_partition_rule_parreloptions - 1] =
-			transformRelOptions((Datum) 0, rule->parreloptions, NULL, NULL, true, false);
-	else
+	/*
+	 * If rule->parreloptions is NIL, the function `transformRelOptions`
+	 * will return the first argument.
+	 */
+	values[Anum_pg_partition_rule_parreloptions - 1] =
+		transformRelOptions((Datum) 0, rule->parreloptions, NULL, NULL, true, false);
+	/*
+	 * There some cases that transformRelOptions in the above will return a NULL.
+	 * Add a check here.
+	 */
+	if (!values[Anum_pg_partition_rule_parreloptions - 1])
 		isnull[Anum_pg_partition_rule_parreloptions - 1] = true;
 
 	values[Anum_pg_partition_rule_partemplatespace - 1] =
@@ -2821,7 +2828,7 @@ getPartConstraintsContainsKeys(Oid partOid, Oid rootOid, List *partKey)
 	char	   *conBin;
 	bool		conbinIsNull = false;
 	bool		conKeyIsNull = false;
-	AttrMap    *map;
+	TupleConversionMap *map;
 
 	/* create the map needed for mapping attnums */
 	Relation	rootRel = heap_open(rootOid, AccessShareLock);
@@ -7717,8 +7724,8 @@ can_implement_dist_on_part(Relation rel, DistributedBy *dist)
 bool
 is_exchangeable(Relation rel, Relation oldrel, Relation newrel, bool throw)
 {
-	AttrMap    *map_new = NULL;
-	AttrMap    *map_old = NULL;
+	TupleConversionMap *map_new = NULL;
+	TupleConversionMap *map_old = NULL;
 	bool		congruent = TRUE;
 
 	/* Both parts must be relations. */
@@ -7948,7 +7955,7 @@ is_exchangeable(Relation rel, Relation oldrel, Relation newrel, bool throw)
  * be supplied via this argument.
  */
 static NewConstraint *
-constraint_apply_mapped(HeapTuple tuple, AttrMap *map, Relation cand,
+constraint_apply_mapped(HeapTuple tuple, TupleConversionMap *map, Relation cand,
 						bool validate, Relation pgcon)
 {
 	Datum		val;
@@ -8416,24 +8423,39 @@ ChooseConstraintNameForPartitionCreate(const char *rname,
  * an error.  The argument primary just conditions the message text.
  */
 void
-checkUniqueConstraintVsPartitioning(Relation rel, AttrNumber *indattr, int nidxatts, bool primary)
+index_check_partitioning_compatible(Relation rel,
+									AttrNumber *indattr, Oid *exclops, int nidxatts,
+									bool primary)
 {
 	int			i;
-	bool		contains;
-	Bitmapset  *ikey = NULL;
-	Bitmapset  *pkey = get_partition_key_bitmapset(RelationGetRelid(rel));
+	Bitmapset  *ikey;
+	Bitmapset  *pkey;
 
+	if (exclops)
+	{
+		/*
+		 * For now, don't allow exclusion constraints on partitioned tables at
+		 * all.
+		 *
+		 * XXX: There's no fundamental reason they couldn't be made to work.
+		 * As long as the index contains all the partitioning key columns,
+		 * with the equality operators as the exclusion operators, they would
+		 * work. These are the same conditions as with compatibility with
+		 * distribution keys. But the code to check that hasn't been written
+		 * yet.
+		 */
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("exclusion constraints are not supported on partitioned tables")));
+	}
+
+	ikey = NULL;
 	for (i = 0; i < nidxatts; i++)
 		ikey = bms_add_member(ikey, indattr[i]);
 
-	contains = bms_is_subset(pkey, ikey);
+	pkey = get_partition_key_bitmapset(RelationGetRelid(rel));
 
-	if (pkey)
-		bms_free(pkey);
-	if (ikey)
-		bms_free(ikey);
-
-	if (!contains)
+	if (!bms_is_subset(pkey, ikey))
 	{
 		char	   *what = "UNIQUE";
 
@@ -8446,6 +8468,9 @@ checkUniqueConstraintVsPartitioning(Relation rel, AttrNumber *indattr, int nidxa
 						what, RelationGetRelationName(rel)),
 				 errhint("Include the partition key or create a part-wise UNIQUE index instead.")));
 	}
+
+	bms_free(pkey);
+	bms_free(ikey);
 }
 
 /**
