@@ -59,7 +59,7 @@
  * For endpoint(on Entry DB/QE), only keep one entry to track current message
  * queue.
  */
-typedef struct MsgQueueStatusEntry
+struct MsgQueueStatusEntry
 {
 	/* The name of endpoint to be retrieved, also behave as hash key */
 	char		endpointName[NAMEDATALEN];
@@ -75,12 +75,13 @@ typedef struct MsgQueueStatusEntry
 	TupleQueueReader *tqReader;
 	/* Track retrieve status */
 	enum RetrieveStatus retrieveStatus;
-}	MsgQueueStatusEntry;
+};
 
-/* Hash table to cache tuple descriptors for all endpoint_names which have been
- * retrieved in this retrieve session */
+/*
+ * Hash table to cache tuple descriptors for all endpoint_names which have been
+ * retrieved in this retrieve session
+ */
 static HTAB *mqStatusHTB = NULL;
-static MsgQueueStatusEntry *currentMQEntry = NULL;
 
 static void init_msg_queue_status_entry(MsgQueueStatusEntry *entry);
 static Endpoint get_endpoint_from_mq_status_entry(MsgQueueStatusEntry *entry);
@@ -139,12 +140,12 @@ GetRetrieveStmtTupleDesc(const RetrieveStmt * stmt)
 {
 	Assert(stmt);
 
-	currentMQEntry = start_retrieve(stmt->endpoint_name);
+	EndpointCtl.receiver.currentMQEntry = start_retrieve(stmt->endpoint_name);
 
-	Assert(currentMQEntry->retrieveTs);
-	Assert(currentMQEntry->retrieveTs->tts_tupleDescriptor);
+	Assert(EndpointCtl.receiver.currentMQEntry->retrieveTs);
+	Assert(EndpointCtl.receiver.currentMQEntry->retrieveTs->tts_tupleDescriptor);
 
-	return currentMQEntry->retrieveTs->tts_tupleDescriptor;
+	return EndpointCtl.receiver.currentMQEntry->retrieveTs->tts_tupleDescriptor;
 }
 
 /*
@@ -595,7 +596,7 @@ finish_retrieve(MsgQueueStatusEntry *entry, bool resetPID)
 		 * will occupy current endpoint entry.
 		 */
 		LWLockRelease(ParallelCursorEndpointLock);
-		currentMQEntry = NULL;
+		EndpointCtl.receiver.currentMQEntry = NULL;
 		return;
 	}
 
@@ -633,7 +634,7 @@ finish_retrieve(MsgQueueStatusEntry *entry, bool resetPID)
 	}
 
 	LWLockRelease(ParallelCursorEndpointLock);
-	currentMQEntry = NULL;
+	EndpointCtl.receiver.currentMQEntry = NULL;
 }
 
 /*
@@ -721,9 +722,9 @@ retrieve_exit_callback(int code, Datum arg)
 		return;
 
 	/* If the MQ entry has not be retrieved in this run. */
-	if (currentMQEntry)
+	if (EndpointCtl.receiver.currentMQEntry)
 	{
-		finish_retrieve(currentMQEntry, true);
+		finish_retrieve(EndpointCtl.receiver.currentMQEntry, true);
 	}
 
 	/* Cancel all partially retrieved endpoints in this retrieve session */
@@ -761,12 +762,13 @@ retrieve_xact_abort_callback(XactEvent ev, void *vp)
 	{
 		elog(DEBUG3, "CDB_ENDPOINT: retrieve xact abort callback");
 		if (EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_RECEIVER &&
-			EndpointCtl.sessionID != InvalidSession && currentMQEntry)
+			EndpointCtl.sessionID != InvalidSession &&
+			EndpointCtl.receiver.currentMQEntry)
 		{
-			if (currentMQEntry->retrieveStatus != RETRIEVE_STATUS_FINISH)
-				retrieve_cancel_action(currentMQEntry,
+			if (EndpointCtl.receiver.currentMQEntry->retrieveStatus != RETRIEVE_STATUS_FINISH)
+				retrieve_cancel_action(EndpointCtl.receiver.currentMQEntry,
 									   "Endpoint retrieve statement aborted");
-			finish_retrieve(currentMQEntry, true);
+			finish_retrieve(EndpointCtl.receiver.currentMQEntry, true);
 		}
 		ClearParallelRtrvCursorExecRole();
 	}

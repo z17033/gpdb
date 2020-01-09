@@ -160,11 +160,12 @@ setupTCPListeningSocket(int backlog, int *listenerSocketFd, uint16 *listenerPort
 	 * QD local connections tend to be AF_UNIX, or on 127.0.0.1 -- so bind
 	 * everything)
 	 *
-	 * EntryDB can be used to exec gather motion for parallel retrieve cursor
-	 * when endpoint on master
+	 * Consider parallel retrieve cursor, for some plans(which may include LIMIT
+	 * or ORDER BY clause), we may push gather motion on EntryDB and create
+	 * endpoint on it.
 	 */
 	if (Gp_role == GP_ROLE_DISPATCH ||
-	    ( Gp_role == GP_ROLE_EXECUTE && GpIdentity.segindex == MASTER_CONTENT_ID) ||
+		(Gp_role == GP_ROLE_EXECUTE && GpIdentity.segindex == MASTER_CONTENT_ID) ||
 	    MyProcPort == NULL ||
 		(MyProcPort->laddr.addr.ss_family != AF_INET &&
 		 MyProcPort->laddr.addr.ss_family != AF_INET6))

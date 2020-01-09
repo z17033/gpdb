@@ -92,6 +92,7 @@ typedef struct EndpointDesc
 								 * free */
 }	EndpointDesc;
 
+typedef struct MsgQueueStatusEntry MsgQueueStatusEntry;
 
 /*
  * Local structure to record current PARALLEL RETRIEVE CURSOR token and other info.
@@ -107,9 +108,22 @@ typedef struct EndpointControl
 	 * token.
 	 */
 	int			sessionID;
+
+	struct sender
+	{
+		/* Track userIDs to clean up SessionInfoEntry when transaction exit */
+		List *sessionUserList;
+	} sender;
+
+	struct receiver
+	{
+		/* Track current msg queue entry for running RETRIEVE statement */
+		MsgQueueStatusEntry *currentMQEntry;
+	} receiver;
 }	EndpointControl;
 
 typedef EndpointDesc *Endpoint;
+
 extern EndpointControl EndpointCtl;		/* Endpoint ctrl */
 
 extern void check_parallel_cursor_errors(EState *estate);

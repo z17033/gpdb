@@ -76,7 +76,8 @@ static enum AttachStatus status_string_to_enum(const char *status);
 static bool check_parallel_retrieve_cursor(const char *cursorName, bool isWait);
 
 /* Endpoint control information for current session. */
-struct EndpointControl EndpointCtl = {PARALLEL_RETRIEVE_NONE, InvalidSession};
+struct EndpointControl EndpointCtl = {
+	PARALLEL_RETRIEVE_NONE, InvalidSession, .sender={NULL}, .receiver={NULL}};
 
 /*
  * Convert the string tk0123456789 to int 0123456789 and save it into

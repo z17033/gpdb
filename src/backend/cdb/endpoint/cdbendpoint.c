@@ -117,9 +117,10 @@ typedef struct SessionTokenTag
  * entries for each transaction exit callback instead. And create new entry
  * if not exists.
  *
- * Since in a transaction, user can 'SET ROLE' to a different user, sessionUserList
- * is used to track userIDs. When clean callback(session_info_clean_callback)
- * executes, it removes all entries for these users.
+ * Since in a transaction, user can 'SET ROLE' to a different user,
+ * EndpointCtl.sender.sessionUserList is used to track userIDs.
+ * When clean callback(session_info_clean_callback) executes, it removes
+ * all entries for these users.
  */
 typedef struct SessionInfoEntry
 {
@@ -127,14 +128,12 @@ typedef struct SessionInfoEntry
 
 	/* The auth token for this session. */
 	int8		token[ENDPOINT_TOKEN_LEN];
-	/* How many endpoint are refered to this entry. */
+	/* How many endpoint are referred to this entry. */
 	uint16      endpointCounter;
 }	SessionInfoEntry;
 
 /* Shared hash table for session infos */
 static HTAB *sharedSessionInfoHash = NULL;
-/* Track userIDs to clean up SessionInfoEntry */
-static List *sessionUserList = NULL;
 
 /* Point to EndpointDesc entries in shared memory */
 static EndpointDesc *sharedEndpoints = NULL;
@@ -630,7 +629,8 @@ init_session_info_entry(void)
 	{
 		/* Track userID in current transaction */
 		MemoryContext oldMemoryCtx = MemoryContextSwitchTo(TopMemoryContext);
-		sessionUserList = lappend_oid(sessionUserList, GetUserId());
+		EndpointCtl.sender.sessionUserList = lappend_oid(
+			EndpointCtl.sender.sessionUserList, GetUserId());
 		MemoryContextSwitchTo(oldMemoryCtx);
 
 		token = get_or_create_token();
@@ -1109,11 +1109,12 @@ session_info_clean_callback(XactEvent ev, void *vp)
 			 "CDB_ENDPOINT: session_info_clean_callback clean token for session %d",
 			 EndpointCtl.sessionID);
 
-		if (sessionUserList && sessionUserList->length > 0)
+		if (EndpointCtl.sender.sessionUserList &&
+			EndpointCtl.sender.sessionUserList->length > 0)
 		{
 			ListCell   *cell;
 			LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-			foreach(cell, sessionUserList)
+			foreach(cell, EndpointCtl.sender.sessionUserList)
 			{
 				SessionTokenTag tag;
 
@@ -1136,8 +1137,8 @@ session_info_clean_callback(XactEvent ev, void *vp)
 				}
 			}
 			LWLockRelease(ParallelCursorEndpointLock);
-			list_free(sessionUserList);
-			sessionUserList = NULL;
+			list_free(EndpointCtl.sender.sessionUserList);
+			EndpointCtl.sender.sessionUserList = NULL;
 		}
 	}
 }
