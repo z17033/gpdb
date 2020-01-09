@@ -7,13 +7,6 @@ CREATE
 insert into t1 select generate_series(1,100);
 INSERT 100
 
-DROP TABLE IF EXISTS t2;
-DROP
-CREATE TABLE t2 (a INT) DISTRIBUTED by (a);
-CREATE
-insert into t2 select generate_series(1,10000000);
-INSERT 10000000
-
 CREATE EXTENSION IF NOT EXISTS gp_inject_fault;
 CREATE
 
@@ -467,12 +460,12 @@ ROLLBACK
 -----------------
  Success:        
 (1 row)
-1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 1, 6, 10, 2::smallint);
+1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 5, 6, 3, 2::smallint);
  gp_inject_fault 
 -----------------
  Success:        
 (1 row)
-1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 1, 6, 10, 4::smallint);
+1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 5, 6, 3, 4::smallint);
  gp_inject_fault 
 -----------------
  Success:        
@@ -520,9 +513,9 @@ ERROR:  canceling statement due to user request
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 
 0R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id5_1 aborted unexpectedly.
 2R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id5_3 aborted unexpectedly.
 
 1<:  <... completed>
 FAILED:  Execution failed
@@ -545,17 +538,17 @@ ROLLBACK
 (1 row)
 
 -- Test6: close PARALLEL RETRIEVE CURSOR during retrieve
-1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 1, 6, 10, 2::smallint);
+1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 5, 6, 3, 2::smallint);
  gp_inject_fault 
 -----------------
  Success:        
 (1 row)
-1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 1, 6, 10, 4::smallint);
+1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 5, 6, 3, 4::smallint);
  gp_inject_fault 
 -----------------
  Success:        
 (1 row)
-1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 1, 6, 10, 3::smallint);
+1: SELECT gp_inject_fault('fetch_tuples_from_endpoint', 'sleep', '', '', '', 5, 6, 3, 3::smallint);
  gp_inject_fault 
 -----------------
  Success:        
@@ -601,11 +594,11 @@ DECLARE
 CLOSE
 
 0R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id7_1 aborted unexpectedly.
 1R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id7_2 aborted unexpectedly.
 2R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id7_3 aborted unexpectedly.
 
 1: SELECT * FROM gp_check_parallel_retrieve_cursor('c1');
 ERROR:  cursor "c1" does not exist

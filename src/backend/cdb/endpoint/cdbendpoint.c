@@ -161,8 +161,6 @@ static void detach_mq(dsm_segment *dsmSeg);
 static void init_session_info_entry(void);
 static void wait_receiver(void);
 static void unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc);
-static void signal_receiver_abort(pid_t receiverPid,
-					  enum AttachStatus attachStatus);
 static void endpoint_abort(void);
 static void wait_parallel_retrieve_close(void);
 static void register_endpoint_callbacks(void);
@@ -740,13 +738,6 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 	elog(DEBUG3, "CDB_ENDPOINT: unset endpoint sender pid.");
 
 	/*
-	 * Since the receiver is not in the session, sender has the duty to cancel
-	 * it.
-	 */
-	signal_receiver_abort(endPointDesc->receiverPid,
-						  endPointDesc->attachStatus);
-
-	/*
 	 * Only the endpoint QE/entry DB execute this unset sender pid function. The
 	 * sender pid in Endpoint entry must be MyProcPid or InvalidPid.
 	 */
@@ -763,25 +754,6 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 		{
 			cdbdisp_sendAckMessageToQD(ENDPOINT_FINISHED_ACK);
 		}
-	}
-}
-
-/*
- * If endpoint exit with error, let retrieve role know exception happened.
- * Called by endpoint.
- */
-static void
-signal_receiver_abort(pid_t receiverPid, enum AttachStatus attachStatus)
-{
-	bool		isAttached;
-
-	elog(DEBUG3, "CDB_ENDPOINT: signal the receiver to abort.");
-
-	isAttached = (attachStatus == Status_Retrieving);
-	if (receiverPid != InvalidPid && isAttached && receiverPid != MyProcPid)
-	{
-		SetBackendCancelMessage(receiverPid, "Signal the receiver to abort.");
-		kill(receiverPid, SIGINT);
 	}
 }
 

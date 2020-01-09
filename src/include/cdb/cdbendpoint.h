@@ -62,7 +62,6 @@ enum ParallelRtrvCursorExecRole
  */
 enum EndPointExecPosition
 {
-	ENDPOINT_POS_INVALID,
 	ENDPOINT_ON_ENTRY_DB,
 	ENDPOINT_ON_SINGLE_QE,
 	ENDPOINT_ON_SOME_QE,

@@ -1,9 +1,5 @@
 -- @Description Tests with faut inject
 --
-DROP TABLE IF EXISTS t1;
-CREATE TABLE t1 (a INT) DISTRIBUTED by (a);
-insert into t1 select generate_series(1,100);
-
 DROP TABLE IF EXISTS t2;
 CREATE TABLE t2 (a INT) DISTRIBUTED by (a);
 insert into t2 select generate_series(1,10000000);

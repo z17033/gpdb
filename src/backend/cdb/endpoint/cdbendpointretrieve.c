@@ -159,12 +159,10 @@ GetRetrieveStmtTupleDesc(const RetrieveStmt * stmt)
 void
 ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
 {
-	MsgQueueStatusEntry *entry = NULL;
 	TupleTableSlot *result = NULL;
 	int64		retrieveCount;
 
-	entry = hash_search(mqStatusHTB, stmt->endpoint_name, HASH_FIND, NULL);
-	if (entry == NULL)
+	if (EndpointCtl.receiver.currentMQEntry == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("endpoint %s has not been attached.",
@@ -180,34 +178,22 @@ ExecRetrieveStmt(const RetrieveStmt * stmt, DestReceiver *dest)
 							retrieveCount)));
 	}
 
-	if (entry->retrieveStatus < RETRIEVE_STATUS_FINISH)
+	if (EndpointCtl.receiver.currentMQEntry->retrieveStatus < RETRIEVE_STATUS_FINISH)
 	{
-		while (retrieveCount > 0)
+		while (stmt->is_all || retrieveCount > 0)
 		{
-			result = receive_tuple_slot(entry);
+			result = receive_tuple_slot(EndpointCtl.receiver.currentMQEntry);
 			if (!result)
 			{
 				break;
 			}
 			(*dest->receiveSlot) (result, dest);
-			retrieveCount--;
-		}
-
-		if (stmt->is_all)
-		{
-			while (true)
-			{
-				result = receive_tuple_slot(entry);
-				if (!result)
-				{
-					break;
-				}
-				(*dest->receiveSlot) (result, dest);
-			}
+			if (!(stmt->is_all))
+				retrieveCount--;
 		}
 	}
 
-	finish_retrieve(entry, false);
+	finish_retrieve(EndpointCtl.receiver.currentMQEntry, false);
 	ClearParallelRtrvCursorExecRole();
 }
 
@@ -434,6 +420,8 @@ detach_receiver_mq(MsgQueueStatusEntry *entry)
 
 /*
  * Notify the sender to stop waiting on the ackDone latch.
+ *
+ * If current endpoint get freed, it means the endpoint aborted.
  */
 static void
 notify_sender(MsgQueueStatusEntry *entry, bool isFinished)
@@ -446,9 +434,10 @@ notify_sender(MsgQueueStatusEntry *entry, bool isFinished)
 	if (endpoint == NULL)
 	{
 		LWLockRelease(ParallelCursorEndpointLock);
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("failed to notify non-existing endpoint %s",
-							   entry->endpointName)));
+		ereport(ERROR,
+				(errcode(ERRCODE_QUERY_CANCELED),
+				 errmsg("Parallel RETRIEVE CURSOR endpoint %s aborted unexpectedly.",
+					entry->endpointName)));
 	}
 	if (isFinished)
 	{

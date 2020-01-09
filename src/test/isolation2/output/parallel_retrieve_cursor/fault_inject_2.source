@@ -1,12 +1,5 @@
 -- @Description Tests with faut inject
 --
-DROP TABLE IF EXISTS t1;
-DROP
-CREATE TABLE t1 (a INT) DISTRIBUTED by (a);
-CREATE
-insert into t1 select generate_series(1,100);
-INSERT 100
-
 DROP TABLE IF EXISTS t2;
 DROP
 CREATE TABLE t2 (a INT) DISTRIBUTED by (a);
@@ -68,9 +61,9 @@ ERROR:  canceling statement due to user request
 ERROR:  canceling MPP operation: "Endpoint retrieve statement aborted"
 
 0R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id6_1 aborted unexpectedly.
 2R<:  <... completed>
-ERROR:  canceling statement due to user request: "Signal the receiver to abort."
+ERROR:  Parallel RETRIEVE CURSOR endpoint endpoint_id6_3 aborted unexpectedly.
 
 1<:  <... completed>
 FAILED:  Execution failed
