@@ -138,13 +138,6 @@ static HTAB *sharedSessionInfoHash = NULL;
 /* Point to EndpointDesc entries in shared memory */
 static EndpointDesc *sharedEndpoints = NULL;
 
-/* Current EndpointDesc entry for sender.
- * It is set when create dest receiver and unset when destroy it. */
-static volatile EndpointDesc *activeSharedEndpoint = NULL;
-
-/* Current dsm_segment pointer, saved it for detach. */
-static dsm_segment *activeDsmSeg = NULL;
-
 /* Init helper functions */
 static void init_shared_endpoints(Endpoint endpoints);
 
@@ -159,21 +152,16 @@ static void create_and_connect_mq(TupleDesc tupleDesc,
 					  shm_mq_handle **mqHandle /* out */ );
 static void detach_mq(dsm_segment *dsmSeg);
 static void init_session_info_entry(void);
-static void wait_receiver(void);
+static void wait_receiver(ParallelRtrvCursorSenderState *state);
 static void unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc);
-static void endpoint_abort(void);
+static void abort_endpoint(ParallelRtrvCursorSenderState *state);
 static void wait_parallel_retrieve_close(void);
-static void register_endpoint_callbacks(void);
-static void sender_xact_abort_callback(XactEvent ev, void *vp);
-static void sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
-						SubTransactionId parentSubid, void *arg);
 
 /* utility */
 static void generate_endpoint_name(char *name, const char *cursorName,
 					   int32 sessionID);
 
-/* Endpoints internal operation UDF's helper function */
-static void session_info_clean_callback(XactEvent ev, void *vp);
+static void clean_session_token_info();
 
 /*
  * Endpoint_ShmemSize - Calculate the shared memory size for PARALLEL RETRIEVE
@@ -339,28 +327,26 @@ get_or_create_token(void)
  * retriever.
  */
 DestReceiver *
-CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
+CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName,
+		ParallelRtrvCursorSenderState *state)
 {
 	shm_mq_handle *shmMqHandle;
 
-	Assert(!activeSharedEndpoint);
-	Assert(!activeDsmSeg);
+	Assert(!state->endpoint);
+	Assert(!state->dsmSeg);
 	Assert(EndpointCtl.GpParallelRtrvRole == PARALLEL_RETRIEVE_SENDER);
-
-	/* Register callback to deal with proc exit. */
-	register_endpoint_callbacks();
 
 	/*
 	 * The message queue needs to be created first since the dsm_handle has to
 	 * be ready when create EndpointDesc entry.
 	 */
-	create_and_connect_mq(tupleDesc, &activeDsmSeg, &shmMqHandle);
+	create_and_connect_mq(tupleDesc, &state->dsmSeg, &shmMqHandle);
 
 	/*
 	 * Alloc endpoint and set it as the active one for sender.
 	 */
-	activeSharedEndpoint =
-		alloc_endpoint(cursorName, dsm_segment_handle(activeDsmSeg));
+	state->endpoint =
+		alloc_endpoint(cursorName, dsm_segment_handle(state->dsmSeg));
 	init_session_info_entry();
 
 	/*
@@ -383,16 +369,17 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName)
  * Should also clean all other endpoint info here.
  */
 void
-DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
+DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest,
+		ParallelRtrvCursorSenderState *state)
 {
-	Assert(activeSharedEndpoint);
-	Assert(activeDsmSeg);
+	Assert(state->endpoint);
+	Assert(state->dsmSeg);
 
 	/*
 	 * wait for receiver to retrieve the first row. ackDone latch will be
 	 * reset to be re-used when retrieving finished.
 	 */
-	wait_receiver();
+	wait_receiver(state);
 
 	/*
 	 * tqueueShutdownReceiver() (rShutdown callback) will call
@@ -407,10 +394,10 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	 * when endpoint send all data to shared message queue. The retrieve
 	 * session may still not get all data from
 	 */
-	wait_receiver();
+	wait_receiver(state);
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-	unset_endpoint_sender_pid(activeSharedEndpoint);
+	unset_endpoint_sender_pid(state->endpoint);
 	LWLockRelease(ParallelCursorEndpointLock);
 
 	/*
@@ -423,12 +410,12 @@ DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest)
 	wait_parallel_retrieve_close();
 
 	LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-	free_endpoint(activeSharedEndpoint);
+	free_endpoint(state->endpoint);
 	LWLockRelease(ParallelCursorEndpointLock);
 
-	activeSharedEndpoint = NULL;
-	detach_mq(activeDsmSeg);
-	activeDsmSeg = NULL;
+	state->endpoint = NULL;
+	detach_mq(state->dsmSeg);
+	state->dsmSeg = NULL;
 	ClearParallelRtrvCursorExecRole();
 }
 
@@ -666,7 +653,7 @@ init_session_info_entry(void)
  * from the queue, the queue will be not available for receiver.
  */
 static void
-wait_receiver(void)
+wait_receiver(ParallelRtrvCursorSenderState *state)
 {
 	elog(DEBUG3, "CDB_ENDPOINTS: wait receiver.");
 	while (true)
@@ -679,7 +666,7 @@ wait_receiver(void)
 			break;
 
 		elog(DEBUG5, "CDB_ENDPOINT: sender wait latch in wait_receiver()");
-		wr = WaitLatch(&activeSharedEndpoint->ackDone,
+		wr = WaitLatch(&state->endpoint->ackDone,
 					   WL_LATCH_SET | WL_ERROR_ON_LIBPQ_DEATH | WL_POSTMASTER_DEATH | WL_TIMEOUT,
 					   WAIT_NORMAL_TIMEOUT);
 		if (wr & WL_TIMEOUT)
@@ -687,7 +674,7 @@ wait_receiver(void)
 
 		if (wr & WL_POSTMASTER_DEATH)
 		{
-			endpoint_abort();
+			abort_endpoint(state);
 			elog(DEBUG3, "CDB_ENDPOINT: postmaster exit, close shared memory "
 				 "message queue.");
 			proc_exit(0);
@@ -695,7 +682,7 @@ wait_receiver(void)
 
 		Assert(wr & WL_LATCH_SET);
 		elog(DEBUG3, "CDB_ENDPOINT:sender reset latch in wait_receiver()");
-		ResetLatch(&activeSharedEndpoint->ackDone);
+		ResetLatch(&state->endpoint->ackDone);
 		break;
 	}
 }
@@ -758,22 +745,22 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
 }
 
 /*
- * endpoint_abort - xact abort routine for endpoint
+ * abort_endpoint - xact abort routine for endpoint
  */
 static void
-endpoint_abort(void)
+abort_endpoint(ParallelRtrvCursorSenderState *state)
 {
-	if (activeSharedEndpoint)
+	if (state->endpoint)
 	{
 		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
 		/*
 		 * These two better be called in one lock section.
 		 * So retriever abort will not execute extra works.
 		 */
-		unset_endpoint_sender_pid(activeSharedEndpoint);
-		free_endpoint(activeSharedEndpoint);
+		unset_endpoint_sender_pid(state->endpoint);
+		free_endpoint(state->endpoint);
 		LWLockRelease(ParallelCursorEndpointLock);
-		activeSharedEndpoint = NULL;
+		state->endpoint = NULL;
 	}
 
 	/*
@@ -785,10 +772,10 @@ endpoint_abort(void)
 	 * So here, need to make sure signal retrieve abort first before endpoint
 	 * detach message queue.
 	 */
-	if (activeDsmSeg)
+	if (state->dsmSeg)
 	{
-		detach_mq(activeDsmSeg);
-		activeDsmSeg = NULL;
+		detach_mq(state->dsmSeg);
+		state->dsmSeg = NULL;
 	}
 	ClearParallelRtrvCursorExecRole();
 }
@@ -869,55 +856,6 @@ free_endpoint(volatile EndpointDesc * endpoint)
 
 	endpoint->sessionID = InvalidSession;
 	endpoint->userID = InvalidOid;
-}
-
-/*
- * Register callback for endpoint/sender to deal with xact abort.
- */
-static void
-register_endpoint_callbacks(void)
-{
-	static bool isRegistered = false;
-
-	if (!isRegistered)
-	{
-		/* Register callback to deal with proc endpoint xact abort. */
-		RegisterSubXactCallback(sender_subxact_callback, NULL);
-		RegisterXactCallback(sender_xact_abort_callback, NULL);
-
-		RegisterXactCallback(session_info_clean_callback, NULL);
-		isRegistered = true;
-	}
-}
-
-/*
- * If endpoint/sender on xact abort, do endpoint clean jobs.
- */
-static void
-sender_xact_abort_callback(XactEvent ev, void *vp)
-{
-	if (ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT)
-	{
-		if (Gp_role == GP_ROLE_RETRIEVE || Gp_role == GP_ROLE_UTILITY)
-		{
-			return;
-		}
-		elog(DEBUG3, "CDB_ENDPOINT: sender xact abort callback");
-		endpoint_abort();
-	}
-}
-
-/*
- * If endpoint/sender on sub xact abort, do endpoint clean jobs.
- */
-static void
-sender_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
-						SubTransactionId parentSubid, void *arg)
-{
-	if (event == SUBXACT_EVENT_ABORT_SUB)
-	{
-		sender_xact_abort_callback(XACT_EVENT_ABORT, arg);
-	}
 }
 
 EndpointDesc *
@@ -1064,53 +1002,59 @@ generate_endpoint_name(char *name, const char *cursorName, int32 sessionID)
 #endif
 }
 
-
 /*
- * session_info_clean_callback - callback when xact finished
- *
- * When an xact finished, clean "session - token" mapping entry in
- * shared memory is needed, since there's no endpoint for current session.
+ * Clean "session - token" mapping entry
  */
 static void
-session_info_clean_callback(XactEvent ev, void *vp)
+clean_session_token_info()
 {
-	if ((ev == XACT_EVENT_COMMIT || ev == XACT_EVENT_PARALLEL_COMMIT ||
-		 ev == XACT_EVENT_ABORT || ev == XACT_EVENT_PARALLEL_ABORT))
-	{
-		elog(DEBUG3,
-			 "CDB_ENDPOINT: session_info_clean_callback clean token for session %d",
-			 EndpointCtl.sessionID);
+	elog(DEBUG3,
+		"CDB_ENDPOINT: session_info_clean_callback clean token for session %d",
+		EndpointCtl.sessionID);
 
-		if (EndpointCtl.sender.sessionUserList &&
+	if (EndpointCtl.sender.sessionUserList &&
 			EndpointCtl.sender.sessionUserList->length > 0)
+	{
+		ListCell   *cell;
+		LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
+		foreach(cell, EndpointCtl.sender.sessionUserList)
 		{
-			ListCell   *cell;
-			LWLockAcquire(ParallelCursorEndpointLock, LW_EXCLUSIVE);
-			foreach(cell, EndpointCtl.sender.sessionUserList)
-			{
-				SessionTokenTag tag;
+			SessionTokenTag tag;
 
-				/*
-				 * When proc exit, the gp_session_id is -1, so use our record session
-				 * id instead
-				 */
-				tag.sessionID = EndpointCtl.sessionID;
-				tag.userID = lfirst_oid(cell);
+			/*
+			 * When proc exit, the gp_session_id is -1, so use our record session
+			 * id instead
+			 */
+			tag.sessionID = EndpointCtl.sessionID;
+			tag.userID = lfirst_oid(cell);
 
-				SessionInfoEntry *infoEntry = (SessionInfoEntry *) hash_search(
+			SessionInfoEntry *infoEntry = (SessionInfoEntry *) hash_search(
 					sharedSessionInfoHash, &tag, HASH_FIND, NULL);
-				if (infoEntry && infoEntry->endpointCounter == 0)
-				{
-					hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, NULL);
-					elog(DEBUG3,
-						 "CDB_ENDPOINT: session_info_clean_callback removes exists entry for "
-						 "user id: %d, session: %d",
-						 tag.userID, EndpointCtl.sessionID);
-				}
+			if (infoEntry && infoEntry->endpointCounter == 0)
+			{
+				hash_search(sharedSessionInfoHash, &tag, HASH_REMOVE, NULL);
+				elog(DEBUG3,
+					"CDB_ENDPOINT: clean_session_token_info removes exists entry for "
+					"user id: %d, session: %d",
+					tag.userID, EndpointCtl.sessionID);
 			}
-			LWLockRelease(ParallelCursorEndpointLock);
-			list_free(EndpointCtl.sender.sessionUserList);
-			EndpointCtl.sender.sessionUserList = NULL;
 		}
+		LWLockRelease(ParallelCursorEndpointLock);
+		list_free(EndpointCtl.sender.sessionUserList);
+		EndpointCtl.sender.sessionUserList = NULL;
 	}
+}
+
+/*
+ * Clean up for the sender of parallel retrieve cursor sender.
+ *  1. Free the endpoint and detach the message queue;
+ *  2. clear session-token mapping;
+ *  3. clear parallel retrieve cursor role.
+ */
+void
+ClearParallelRtrvCursorSenderState(ParallelRtrvCursorSenderState *state)
+{
+    abort_endpoint(state);
+    clean_session_token_info();
+    ClearParallelRtrvCursorExecRole();
 }

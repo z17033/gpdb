@@ -45,19 +45,6 @@
 
 
 /*
- * Endpoint attach status.
- */
-enum AttachStatus
-{
-	Status_Invalid = 0,
-	Status_Ready,
-	Status_Retrieving,
-	Status_Attached,
-	Status_Finished,
-	Status_Released
-}	AttachStatus;
-
-/*
  * Retrieve role status.
  */
 enum RetrieveStatus
@@ -67,30 +54,6 @@ enum RetrieveStatus
 	RETRIEVE_STATUS_GET_DATA,
 	RETRIEVE_STATUS_FINISH,
 };
-
-/*
- * Endpoint Description, entries are maintained in shared memory.
- */
-typedef struct EndpointDesc
-{
-	char		name[NAMEDATALEN];		/* Endpoint name */
-	char		cursorName[NAMEDATALEN];		/* Parallel cursor name */
-	Oid			databaseID;		/* Database OID */
-	pid_t		senderPid;		/* The PID of EPR_SENDER(endpoint), set before
-								 * endpoint sends data */
-	pid_t		receiverPid;	/* The retrieve role's PID that connect to
-								 * current endpoint */
-	dsm_handle	mqDsmHandle;	/* DSM handle, which contains shared message
-								 * queue */
-	Latch		ackDone;		/* Latch to sync EPR_SENDER and EPR_RECEIVER
-								 * status */
-	enum AttachStatus attachStatus;		/* The attach status of the endpoint */
-	int			sessionID;		/* Connection session id */
-	Oid			userID;			/* User ID of the current executed PARALLEL
-								 * RETRIEVE CURSOR */
-	bool		empty;			/* Whether current EndpointDesc slot in DSM is
-								 * free */
-}	EndpointDesc;
 
 typedef struct MsgQueueStatusEntry MsgQueueStatusEntry;
 

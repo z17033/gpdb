@@ -434,19 +434,22 @@ LABEL_FINISH:
 
 	if (tokens)
 	{
-		for (int i=0; i< endpoint_conns_num; i++)
+		int i;
+		for (i = 0; i < endpoint_conns_num; i++)
+		{
 			if(tokens[i])
 				free(tokens[i]);
-
+		}
 		free(tokens);
 	}
 
 	if (endpoint_names)
 	{
 		for (i=0; i< endpoint_conns_num; i++)
+		{
 			if(endpoint_names[i])
 				free(endpoint_names[i]);
-
+		}
 		free(endpoint_names);
 	}
 

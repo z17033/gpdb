@@ -29,6 +29,11 @@
 #include "utils/tuplestore.h"
 
 #include "gpmon/gpmon.h"                /* gpmon_packet_t */
+/*
+ * for parallel retrieve cursor
+ */
+#include "storage/latch.h"
+#include "storage/dsm.h"
 
 /*
  * partition selector ids start from 1. Sometimes we use 0 to initialize variables
@@ -538,6 +543,53 @@ typedef struct DynamicTableScanInfo
  */
 #define NUM_PID_INDEXES_ADDED 10
 
+/*
+ * Endpoint attach status, used by parallel retrieve cursor.
+ */
+enum AttachStatus
+{
+	Status_Invalid = 0,
+	Status_Ready,
+	Status_Retrieving,
+	Status_Attached,
+	Status_Finished,
+	Status_Released
+}	AttachStatus;
+
+/*
+ * Endpoint Description, used by parallel retrieve cursor.
+ * Entries are maintained in shared memory.
+ */
+typedef struct EndpointDesc
+{
+	char		name[NAMEDATALEN];		/* Endpoint name */
+	char		cursorName[NAMEDATALEN];		/* Parallel cursor name */
+	Oid			databaseID;		/* Database OID */
+	pid_t		senderPid;		/* The PID of EPR_SENDER(endpoint), set before
+								 * endpoint sends data */
+	pid_t		receiverPid;	/* The retrieve role's PID that connect to
+								 * current endpoint */
+	dsm_handle	mqDsmHandle;	/* DSM handle, which contains shared message
+								 * queue */
+	Latch		ackDone;		/* Latch to sync EPR_SENDER and EPR_RECEIVER
+								 * status */
+	enum AttachStatus attachStatus;		/* The attach status of the endpoint */
+	int			sessionID;		/* Connection session id */
+	Oid			userID;			/* User ID of the current executed PARALLEL
+								 * RETRIEVE CURSOR */
+	bool		empty;			/* Whether current EndpointDesc slot in DSM is
+								 * free */
+}	EndpointDesc;
+
+/*
+ * The state information for parallel retrieve cursor
+ */
+typedef struct ParallelRtrvCursorSenderState
+{
+	struct EndpointDesc *endpoint;	/* endpoint entry */
+	dsm_segment *dsmSeg;			/* dsm_segment pointer */
+}	ParallelRtrvCursorSenderState;
+
 /* ----------------
  *	  EState information
  *
@@ -665,6 +717,9 @@ typedef struct EState
 
 	/* Should the executor skip past the alien plan nodes */
 	bool eliminateAliens;
+
+	/* Information relevant to parallel retrieve cursor */
+	ParallelRtrvCursorSenderState es_sender_state;
 } EState;
 
 struct PlanState;

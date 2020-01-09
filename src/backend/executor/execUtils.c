@@ -191,6 +191,9 @@ CreateExecutorState(void)
 	estate->currentSliceIdInPlan = 0;
 	estate->eliminateAliens = false;
 
+	estate->es_sender_state.endpoint = NULL;
+	estate->es_sender_state.dsmSeg = NULL;
+
 	/*
 	 * Return the executor state structure
 	 */
@@ -240,6 +243,12 @@ FreeExecutorState(EState *estate)
 
 	estate->dispatcherState = NULL;
 	estate->dynamicTableScanInfo = NULL;
+
+	/*
+	 * The state of parallel retrieve cursor sender has been cleaned
+	 */
+	Assert(estate->es_sender_state.endpoint == NULL);
+	Assert(estate->es_sender_state.dsmSeg == NULL);
 
 	/*
 	 * Free the per-query memory context, thereby releasing all working

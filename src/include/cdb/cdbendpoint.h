@@ -39,6 +39,7 @@
 #include "nodes/parsenodes.h"
 #include "tcop/dest.h"
 #include "storage/lwlock.h"
+#include "nodes/execnodes.h"
 
 /*
  * Roles that used in PARALLEL RETRIEVE CURSOR execution.
@@ -83,8 +84,10 @@ extern void WaitEndpointReady(EState *estate);
 /*
  * Below functions should run on Endpoints(QE/Entry DB).
  */
-extern DestReceiver *CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName);
-extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest);
+extern DestReceiver* CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc,
+		const char *cursorName, ParallelRtrvCursorSenderState *state);
+extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest,
+		ParallelRtrvCursorSenderState *state);
 
 /* cdbendpointretrieve.c */
 /*
@@ -99,6 +102,6 @@ extern void ExecRetrieveStmt(const RetrieveStmt *stmt, DestReceiver *dest);
 extern void SetParallelRtrvCursorExecRole(enum ParallelRtrvCursorExecRole role);
 extern void ClearParallelRtrvCursorExecRole(void);
 extern enum ParallelRtrvCursorExecRole GetParallelRtrvCursorExecRole(void);
-
+extern void ClearParallelRtrvCursorSenderState(ParallelRtrvCursorSenderState *state);
 
 #endif   /* CDBENDPOINT_H */

@@ -992,7 +992,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 			if (isParallelRetrieveSender)
 			{
 				endpointDest = CreateTQDestReceiverForEndpoint(
-					queryDesc->tupDesc, queryDesc->ddesc->parallelCursorName);
+					queryDesc->tupDesc, queryDesc->ddesc->parallelCursorName,  &estate->es_sender_state);
 				(*endpointDest->rStartup) (dest, operation, queryDesc->tupDesc);
 			}
 
@@ -1077,7 +1077,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	 */
 	if (isParallelRetrieveSender && endpointDest != NULL)
 	{
-		DestroyTQDestReceiverForEndpoint(endpointDest);
+		DestroyTQDestReceiverForEndpoint(endpointDest, &estate->es_sender_state);
 	}
 
 	if (sendTuples)

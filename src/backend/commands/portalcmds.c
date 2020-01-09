@@ -320,6 +320,14 @@ PortalCleanup(Portal portal)
 	if (queryDesc)
 	{
 		/*
+		 * Clear the sender of parallel retrieve cursor if exists.
+		 */
+		if (queryDesc->estate)
+		{
+			ClearParallelRtrvCursorSenderState(&queryDesc->estate->es_sender_state);
+		}
+
+		/*
 		 * Reset the queryDesc before anything else.  This prevents us from
 		 * trying to shut down the executor twice, in case of an error below.
 		 * The transaction abort mechanisms will take care of resource cleanup
