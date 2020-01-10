@@ -85,9 +85,9 @@ extern void WaitEndpointReady(EState *estate);
  * Below functions should run on Endpoints(QE/Entry DB).
  */
 extern DestReceiver* CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc,
-		const char *cursorName, ParallelRtrvCursorSenderState *state);
+		const char *cursorName, struct ParallelRtrvCursorSenderState *state);
 extern void DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest,
-		ParallelRtrvCursorSenderState *state);
+		struct ParallelRtrvCursorSenderState *state);
 
 /* cdbendpointretrieve.c */
 /*
@@ -102,6 +102,9 @@ extern void ExecRetrieveStmt(const RetrieveStmt *stmt, DestReceiver *dest);
 extern void SetParallelRtrvCursorExecRole(enum ParallelRtrvCursorExecRole role);
 extern void ClearParallelRtrvCursorExecRole(void);
 extern enum ParallelRtrvCursorExecRole GetParallelRtrvCursorExecRole(void);
-extern void ClearParallelRtrvCursorSenderState(ParallelRtrvCursorSenderState *state);
+extern void ClearParallelRtrvCursorSenderState(struct ParallelRtrvCursorSenderState *state);
+
+extern void AllocParallelRtrvCursorSenderState(EState *state);
+extern void FreeParallelRtrvCursorSenderState(EState *state);
 
 #endif   /* CDBENDPOINT_H */

@@ -152,9 +152,9 @@ static void create_and_connect_mq(TupleDesc tupleDesc,
 					  shm_mq_handle **mqHandle /* out */ );
 static void detach_mq(dsm_segment *dsmSeg);
 static void init_session_info_entry(void);
-static void wait_receiver(ParallelRtrvCursorSenderState *state);
-static void unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc);
-static void abort_endpoint(ParallelRtrvCursorSenderState *state);
+static void wait_receiver(struct ParallelRtrvCursorSenderState *state);
+static void unset_endpoint_sender_pid(volatile EndpointDesc *endPointDesc);
+static void abort_endpoint(struct ParallelRtrvCursorSenderState *state);
 static void wait_parallel_retrieve_close(void);
 
 /* utility */
@@ -328,7 +328,7 @@ get_or_create_token(void)
  */
 DestReceiver *
 CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName,
-		ParallelRtrvCursorSenderState *state)
+		struct ParallelRtrvCursorSenderState *state)
 {
 	shm_mq_handle *shmMqHandle;
 
@@ -370,7 +370,7 @@ CreateTQDestReceiverForEndpoint(TupleDesc tupleDesc, const char *cursorName,
  */
 void
 DestroyTQDestReceiverForEndpoint(DestReceiver *endpointDest,
-		ParallelRtrvCursorSenderState *state)
+		struct ParallelRtrvCursorSenderState *state)
 {
 	Assert(state->endpoint);
 	Assert(state->dsmSeg);
@@ -653,7 +653,7 @@ init_session_info_entry(void)
  * from the queue, the queue will be not available for receiver.
  */
 static void
-wait_receiver(ParallelRtrvCursorSenderState *state)
+wait_receiver(struct ParallelRtrvCursorSenderState *state)
 {
 	elog(DEBUG3, "CDB_ENDPOINTS: wait receiver.");
 	while (true)
@@ -748,7 +748,7 @@ unset_endpoint_sender_pid(volatile EndpointDesc * endPointDesc)
  * abort_endpoint - xact abort routine for endpoint
  */
 static void
-abort_endpoint(ParallelRtrvCursorSenderState *state)
+abort_endpoint(struct ParallelRtrvCursorSenderState *state)
 {
 	if (state->endpoint)
 	{
@@ -1052,9 +1052,30 @@ clean_session_token_info()
  *  3. clear parallel retrieve cursor role.
  */
 void
-ClearParallelRtrvCursorSenderState(ParallelRtrvCursorSenderState *state)
+ClearParallelRtrvCursorSenderState(
+		struct ParallelRtrvCursorSenderState *state)
 {
     abort_endpoint(state);
     clean_session_token_info();
     ClearParallelRtrvCursorExecRole();
+}
+
+void AllocParallelRtrvCursorSenderState(EState *estate)
+{
+	Assert(estate);
+	MemoryContext oldcontext;
+
+	oldcontext = MemoryContextSwitchTo(estate->es_query_cxt);
+
+	estate->es_sender_state = palloc0(sizeof(struct ParallelRtrvCursorSenderState));
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
+void FreeParallelRtrvCursorSenderState(EState *estate)
+{
+	if (estate->es_sender_state)
+	{
+		pfree(estate->es_sender_state);
+	}
 }
